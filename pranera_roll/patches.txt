@@ -1,0 +1,11 @@
+[pre_model_sync]
+
+[post_model_sync]
+# Copied from pranera_knit. All three are idempotent (guarded by exists()
+# checks / create_custom_fields), so on a site where pranera_knit already
+# applied them they are a no-op; on a fresh site they create the
+# Roll Pick Assignment Scan / Roll Pick Qty Summary child doctypes and the
+# execution_* / pick_qty_summary / subcontract custom fields this app needs.
+pranera_roll.patches.v1_0.add_pick_order_persistence
+pranera_roll.patches.v1_1.add_pick_qty_summary
+pranera_roll.patches.v1_2.add_subcontract_pick_type

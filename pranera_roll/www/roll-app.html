@@ -1,0 +1,29 @@
+<script>window.csrf_token="{{ csrf_token }}";</script>
+{%- raw -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Roll App — Pranera</title>
+  <meta name="theme-color" content="#1e3a5f"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-title" content="Roll App"/>
+  <link rel="manifest" href="/assets/pranera_roll/roll_app/manifest.webmanifest"/>
+  <link rel="icon" type="image/svg+xml" href="/assets/pranera_roll/images/favicon.svg"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="/assets/pranera_roll/roll_app/icons/icon-192.png"/>
+  <link rel="apple-touch-icon" href="/assets/pranera_roll/roll_app/icons/icon-192.png"/>
+{%- endraw -%}
+  <link rel="stylesheet" href="/assets/pranera_roll/roll_app/index.css?v={{ asset_version }}"/>
+{%- raw -%}
+</head>
+<body>
+  <div id="app"></div>
+{%- endraw -%}
+  <script type="module" src="/assets/pranera_roll/roll_app/index.js?v={{ asset_version }}"></script>
+{%- raw -%}
+  <script id="vite-plugin-pwa:register-sw" src="/assets/pranera_roll/roll_app/registerSW.js"></script>
+</body>
+</html>
+{%- endraw -%}
