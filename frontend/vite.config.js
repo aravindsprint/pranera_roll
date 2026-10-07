@@ -81,12 +81,12 @@ export default defineConfig(({ command }) => ({
     rollupOptions: {
       input: path.resolve(__dirname, 'index.html'),
       output: {
-        entryFileNames: 'index.js',
+        // Hashed entry + CSS: www/roll_app.py copies these exact tags from the
+        // built index.html, so the page and the lazy chunks import the same
+        // URL (one app instance) and every deploy gets fresh filenames.
+        entryFileNames: 'index-[hash].js',
         chunkFileNames: 'chunks/[name]-[hash].js',
-        assetFileNames: (info) => {
-          if (info.name?.endsWith('.css')) return 'index.css'
-          return 'assets/[name]-[hash][extname]'
-        }
+        assetFileNames: 'assets/[name]-[hash][extname]',
       }
     }
   },
@@ -107,7 +107,7 @@ export default defineConfig(({ command }) => ({
         // Create Rolls / Rolls are bundled eagerly and may fall back to the
         // cached shell. My Pick Orders, Pick Order Execution and Verify Rolls are online-only:
         // they POST on every action, and only the server-rendered /roll-app
-        // page (www/roll-app.py) injects window.csrf_token — the cached static
+        // page (www/roll_app.py) injects window.csrf_token — the cached static
         // index.html never has it, so serving them from cache would silently
         // break every POST.
         navigateFallbackDenylist: [

@@ -15,14 +15,11 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/assets/pranera_roll/roll_app/icons/icon-192.png"/>
   <link rel="apple-touch-icon" href="/assets/pranera_roll/roll_app/icons/icon-192.png"/>
 {%- endraw -%}
-  <link rel="stylesheet" href="/assets/pranera_roll/roll_app/index.css?v={{ asset_version }}"/>
+  {{ app_assets }}
 {%- raw -%}
 </head>
 <body>
   <div id="app"></div>
-{%- endraw -%}
-  <script type="module" src="/assets/pranera_roll/roll_app/index.js?v={{ asset_version }}"></script>
-{%- raw -%}
   <script id="vite-plugin-pwa:register-sw" src="/assets/pranera_roll/roll_app/registerSW.js"></script>
 </body>
 </html>

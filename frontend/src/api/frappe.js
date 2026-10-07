@@ -32,8 +32,9 @@ function getCookieValue(name) {
 export async function ensureCSRF() {
   // 1. Already cached
   if (_csrf) return _csrf
-  // 2. Injected by Jinja (production)
-  if (window.csrf_token) { _csrf = window.csrf_token; return _csrf }
+  // 2. Injected by Jinja (production). Ignore an unrendered "{{ csrf_token }}"
+  //    placeholder — sending it makes every POST fail with "Invalid Request".
+  if (window.csrf_token && !String(window.csrf_token).includes('{{')) { _csrf = window.csrf_token; return _csrf }
   // 3. Cookie fallback
   const cookie = getCookieValue('csrftoken') || getCookieValue('X-Frappe-CSRF-Token')
   if (cookie) { _csrf = cookie; return _csrf }
