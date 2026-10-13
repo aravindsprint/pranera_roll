@@ -275,9 +275,9 @@ export const scanPickOrderRoll = (pickOrder, rollNo, sourceWarehouse) =>
     pick_order: pickOrder, roll_no: rollNo, source_warehouse: sourceWarehouse
   }).then(r => r.message)
 
-export const removeScannedRoll = (pickOrder, rollNo) =>
+export const removeScannedRoll = (pickOrder, rollNo, qiReport = null) =>
   call('pranera_roll.api.pick_order.remove_scanned_roll', {
-    pick_order: pickOrder, roll_no: rollNo
+    pick_order: pickOrder, roll_no: rollNo, qi_report: qiReport
   }).then(r => r.message)
 
 // Persists the worker's Source/Target Warehouse choice for this execution
