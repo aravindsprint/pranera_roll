@@ -33,6 +33,9 @@
           <button class="ah-link" :class="{ 'ah-link--active': active === 'rolls' }" @click="go('/roll-app/rolls')">
             <span class="ah-link__icon">🧶</span><span>Rolls</span>
           </button>
+          <button class="ah-link" :class="{ 'ah-link--active': active === 'qi-finish-rolls' }" @click="go('/roll-app/qi-finish-rolls')">
+            <span class="ah-link__icon">🏷️</span><span>QI Finish Rolls</span>
+          </button>
         </nav>
 
         <!-- Theme -->
