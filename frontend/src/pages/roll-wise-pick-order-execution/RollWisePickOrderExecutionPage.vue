@@ -232,7 +232,7 @@ import { useAuthStore } from '@/stores/auth'
 import { usePickOrderStore } from '@/stores/pickOrder'
 import AppHeader from '@/components/AppHeader.vue'
 import AutoComplete from '@/components/AutoComplete.vue'
-import { Html5Qrcode } from 'html5-qrcode'
+import { startCameraScanner, stopCameraScanner as stopSharedScanner } from '@/utils/cameraScanner'
 import moment from 'moment'
 
 const auth = useAuthStore()
@@ -302,7 +302,6 @@ onBeforeUnmount(() => { store.reset(); stopCameraScanner() })
 // ── Camera scanner — identical pattern to RollWisePickListPage.vue ─────────
 const showScannerModal = ref(false)
 const cameraError = ref('')
-let html5QrCode = null
 
 async function openCameraScanner() {
   cameraError.value = ''
@@ -310,27 +309,14 @@ async function openCameraScanner() {
   showScannerModal.value = true
   await nextTick()
   try {
-    html5QrCode = new Html5Qrcode('pick-order-camera-scan-region')
-    await html5QrCode.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
-      onCameraScanSuccess,
-      () => {} // per-frame decode misses are expected — ignore them
-    )
+    await startCameraScanner('pick-order-camera-scan-region', onCameraScanSuccess)
   } catch (err) {
-    cameraError.value = 'Could not access the camera: ' + (err?.message || err)
+    if (showScannerModal.value) cameraError.value = err.message
   }
 }
 
 async function stopCameraScanner() {
-  if (!html5QrCode) return
-  try {
-    if (html5QrCode.isScanning) await html5QrCode.stop()
-    html5QrCode.clear()
-  } catch (err) {
-    console.warn('Failed to stop camera scanner:', err)
-  }
-  html5QrCode = null
+  await stopSharedScanner()
 }
 
 async function closeCameraScanner() {

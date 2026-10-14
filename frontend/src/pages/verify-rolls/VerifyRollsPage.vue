@@ -200,6 +200,9 @@
             </div>
             <div v-if="scanner.error" class="error-banner" style="margin-top:12px">
               <i class="pi pi-exclamation-triangle"></i> {{ scanner.error }}
+              <button class="btn btn-outline btn-full" style="margin-top:8px" @click="startScannerCamera">
+                <i class="pi pi-refresh"></i> Retry
+              </button>
             </div>
             <button class="btn btn-outline btn-full" style="margin-top:14px" @click="closeScanner">
               {{ scanner.mode === 'roll' ? 'Done' : 'Cancel' }}
@@ -245,7 +248,7 @@
 <script setup>
 import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Html5Qrcode } from 'html5-qrcode'
+import { startCameraScanner, stopCameraScanner as stopSharedScanner } from '@/utils/cameraScanner'
 import { useAuthStore } from '@/stores/auth'
 import AppHeader from '@/components/AppHeader.vue'
 import RemoteSelect from '@/components/RemoteSelect.vue'
@@ -478,32 +481,24 @@ const scannerTitle = computed(() => ({
   bin: `Scan Bin for Roll ${scanner.rollNo}`,
   'bin-all': 'Scan Bin for All Rolls',
 }[scanner.mode] || 'Scan'))
-let html5QrCode = null
 let lastText = ''
 let lastAt = 0
 
 async function openScanner(mode, rollNo = '') {
   Object.assign(scanner, { open: true, mode, rollNo, error: '' })
   await nextTick()
+  await startScannerCamera()
+}
+async function startScannerCamera() {
+  scanner.error = ''
   try {
-    html5QrCode = new Html5Qrcode('verify-camera-region')
-    await html5QrCode.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
-      onScan,
-      () => {} // per-frame misses are normal
-    )
+    await startCameraScanner('verify-camera-region', onScan)
   } catch (err) {
-    scanner.error = 'Could not access the camera: ' + (err?.message || err)
+    if (scanner.open) scanner.error = err.message
   }
 }
 async function stopScanner() {
-  if (!html5QrCode) return
-  try {
-    if (html5QrCode.isScanning) await html5QrCode.stop()
-    html5QrCode.clear()
-  } catch (err) { console.warn('Failed to stop camera scanner:', err) }
-  html5QrCode = null
+  await stopSharedScanner()
 }
 async function closeScanner() {
   await stopScanner()
