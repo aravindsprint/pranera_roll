@@ -126,7 +126,7 @@ import { useAuthStore } from '@/stores/auth'
 import AppHeader from '@/components/AppHeader.vue'
 import { call } from '@/api/frappe'
 import QRCode from 'qrcode'
-import { Html5Qrcode } from 'html5-qrcode'
+import { startCameraScanner, stopCameraScanner as stopSharedScanner } from '@/utils/cameraScanner'
 
 const auth = useAuthStore()
 const METHOD = 'pranera_roll.api.qi_rolls.get_qi_finish_rolls'
@@ -328,31 +328,19 @@ function printSelected() { printRows(Array.from(selected.value.values())) }
 // ── Camera scan → fills the search with the sticker's QR text ──────────────
 const showScanner = ref(false)
 const cameraError = ref('')
-let html5QrCode = null
 
 async function openCameraScanner() {
   cameraError.value = ''
   showScanner.value = true
   await nextTick()
   try {
-    html5QrCode = new Html5Qrcode('qi-finish-camera-scan-region')
-    await html5QrCode.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
-      onCameraScan,
-      () => {}
-    )
+    await startCameraScanner('qi-finish-camera-scan-region', onCameraScan)
   } catch (err) {
-    cameraError.value = 'Could not access the camera: ' + (err?.message || err)
+    if (showScanner.value) cameraError.value = err.message
   }
 }
 async function stopCameraScanner() {
-  if (!html5QrCode) return
-  try {
-    if (html5QrCode.isScanning) await html5QrCode.stop()
-    html5QrCode.clear()
-  } catch (err) { console.warn('Failed to stop camera scanner:', err) }
-  html5QrCode = null
+  await stopSharedScanner()
 }
 async function closeCameraScanner() {
   await stopCameraScanner()
