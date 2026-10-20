@@ -113,7 +113,7 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
           same item/batch collapse into a single Stock Entry Detail row.
         * custom_batch_wise_packing_summary carries the batch/qty/roll-count
           breakdown for reporting.
-        * work_order / purchase_order / subcontracting_order /
+        * work_order / sales_order / purchase_order / subcontracting_order /
           custom_reference_stock_entry / custom_reference_batch is set based
           on pick_type + document, and project / custom_from_work_order /
           custom_from_subcontracting are set when supplied.
@@ -371,6 +371,11 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                         se.colour = wo_details.color
                         if wo_details.required_dia:
                             se.finishing_dia = str(wo_details.required_dia)
+            elif pick_type == "To Sales Order":
+                # RFB/ (ready for billing) transfers — stamp the Sales Order
+                # on the Stock Entry's `sales_order` custom field (Link ->
+                # Sales Order) so the RFB entry is traceable to its order.
+                se.sales_order = document_name
             elif pick_type == "From Purchase Order":
                 se.purchase_order = document_name
             elif pick_type in ("To Subcontracting Order", "From Subcontracting Order"):
