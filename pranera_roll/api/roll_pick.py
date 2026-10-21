@@ -8,7 +8,7 @@ pick-order execution flow depends on:
   * _get_warehouse_address
   * get_batch_warehouse_overrides
   * get_pick_qty_targets_by_uom
-  * create_roll_picking_entry   (incl. the authoritative +/-3% tolerance check)
+  * create_roll_picking_entry   (incl. the authoritative +/-10% tolerance check)
 
 Everything else in knit.py (Job Card / roll packing / reconciliation / QI /
 yarn consumption) is out of scope for the Roll app and deliberately not
@@ -21,6 +21,10 @@ import frappe
 import json
 from frappe import _
 from frappe.utils import now_datetime, today, get_datetime, nowtime, cint, flt
+
+# Allowed +/- band around a Pick Order's per-UOM target qty. Single source
+# of truth — pick_order.py imports this for the execution page's band.
+TOLERANCE_PCT = 0.10
 
 
 def _get_warehouse_address(warehouse):
@@ -252,12 +256,13 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                 if not target:
                     continue
                 total_picked = prior_by_uom.get(uom, 0.0) + this_by_uom.get(uom, 0.0)
-                tolerance = target * 0.03
+                tolerance = target * TOLERANCE_PCT
                 if not (target - tolerance <= total_picked <= target + tolerance):
                     frappe.throw(_(
-                        "Picked quantity {0} {1} is outside the allowed \u00b13% tolerance for "
+                        "Picked quantity {0} {1} is outside the allowed \u00b1{4}% tolerance for "
                         "the {1} target {2} (Pick Order {3})"
-                    ).format(round(total_picked, 3), uom, target, roll_pick_assignment))
+                    ).format(round(total_picked, 3), uom, target, roll_pick_assignment,
+                             round(TOLERANCE_PCT * 100)))
 
     try:
         # Stock Entry rows use the Source Warehouse selected on the execution

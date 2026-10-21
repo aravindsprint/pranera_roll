@@ -18,7 +18,7 @@ existed on production and were never fixture-exported).
 
 A supervisor sets a target weight (pick_qty) for a Work Order rather than
 pre-selecting exact rolls — the worker free-scans rolls until the
-cumulative picked weight falls within a +/-3% tolerance of that target.
+cumulative picked weight falls within a +/-10% tolerance of that target.
 Roll weights vary in the real world, so hitting an exact target
 roll-by-roll isn't practical — a tolerance band is.
 
@@ -64,7 +64,7 @@ type — the per-batch Warehouse on the Assignment's Batch Items rows is
 only a planning hint and is not used (see get_batch_warehouse_overrides,
 in roll_pick.py).
 
-The +/-3% tolerance itself is enforced authoritatively server-side, in
+The +/-10% tolerance itself is enforced authoritatively server-side, in
 knit.create_roll_picking_entry (not here) — that's the single point where
 an Assignment's fulfillment actually becomes a real Stock Entry, so
 that's where the final check has to live; a client-side-only check could
@@ -90,9 +90,11 @@ import frappe
 from frappe import _
 from frappe.utils import now_datetime, cint, flt
 
-from pranera_roll.api.roll_pick import create_roll_picking_entry, get_batch_warehouse_overrides, get_pick_qty_targets_by_uom
+from pranera_roll.api.roll_pick import (
+    create_roll_picking_entry, get_batch_warehouse_overrides, get_pick_qty_targets_by_uom,
+    TOLERANCE_PCT,
+)
 
-TOLERANCE_PCT = 0.03
 
 
 def _assert_assigned_to_me(doc):
@@ -314,7 +316,7 @@ def get_my_pick_orders():
 def get_pick_order_detail(name):
     """Full detail for one Assignment: the per-UOM target (see
     get_pick_qty_targets_by_uom — a Kgs target and a Pcs target are
-    unrelated quantities and are each checked against their own ±3%
+    unrelated quantities and are each checked against their own ±10%
     tolerance independently, not blended into one number), whatever's
     already been picked in prior submitted sessions, and whatever's
     currently scanned-but-not-yet-submitted (persisted, so a worker
@@ -729,7 +731,7 @@ def update_scanned_roll_qty(pick_order, roll_no, qty, qi_report=None):
     Only scanned_rolls.qty changes. roll_weight is left as the original QI
     weight (kept for reference / audit), and submit_pick_order builds the
     Roll Wise Pick List and Stock Entry from qty, so the edited figure is
-    what actually moves. The +/-3% tolerance is still enforced on submit
+    what actually moves. The +/-10% tolerance is still enforced on submit
     against the edited totals."""
     doc = frappe.get_doc("Roll Pick Assignment", pick_order)
     _assert_assigned_to_me(doc)
@@ -774,7 +776,7 @@ def submit_pick_order(pick_order, posting_date, submit_stock_entry=1):
     NOT from anything the client passes in — so the source of truth for
     what actually gets moved is always the Assignment's own saved scan
     history, not a client-supplied payload. Delegates the actual Roll
-    Wise Pick List + Stock Entry creation (and the authoritative +/-3%
+    Wise Pick List + Stock Entry creation (and the authoritative +/-10%
     tolerance check) to knit.create_roll_picking_entry, then clears
     scanned_rolls now that they've become a real, submitted pick list —
     this is the one and only pick entry this Assignment will ever

@@ -201,7 +201,7 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
         .map(u => `${u.uom}: picked ${u.totalPicked.toFixed(2)}, target ${u.targetQty.toFixed(2)}`)
         .join('; ')
       throw new Error(
-        `Outside the \u00b13% tolerance for ${offenders.length > 1 ? 'these UOMs' : 'this UOM'} — ${detail}`
+        `Outside the \u00b110% tolerance for ${offenders.length > 1 ? 'these UOMs' : 'this UOM'} — ${detail}`
       )
     }
 
