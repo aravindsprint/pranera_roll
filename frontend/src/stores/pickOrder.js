@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import {
   getMyPickOrders, getPickOrderDetail, scanPickOrderRoll, removeScannedRoll as apiRemoveScannedRoll,
-  updatePickOrderExecution, submitPickOrder,
+  updatePickOrderExecution, submitPickOrder, updateScannedRollQty as apiUpdateScannedRollQty,
 } from '@/api/frappe'
 import { db } from '@/db'
 
@@ -180,6 +180,18 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     )
   }
 
+  // QI Report Details orders only — the server rejects it otherwise.
+  // Replaces the row with the server's copy so progress/tolerance recompute
+  // from the persisted qty.
+  async function updateScannedRollQty(rollNo, qty, qiReport = null) {
+    if (!order.value) return
+    const updated = await apiUpdateScannedRollQty(order.value.name, rollNo, qty, qiReport)
+    scannedRolls.value = scannedRolls.value.map(r =>
+      r.roll_no === rollNo && (!qiReport || r.qi_report === qiReport) ? { ...r, ...updated } : r
+    )
+    return updated
+  }
+
   async function submitOrder(postingDate, submitStockEntry = true) {
     if (!order.value) throw new Error('No Pick Order loaded')
     if (!scannedRolls.value.length) throw new Error('Scan at least one roll before submitting')
@@ -223,6 +235,6 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     scannedRolls,
     uomProgress, withinTolerance, overTolerance,
     loadOrder, setSourceWarehouse, setTargetWarehouse,
-    scanRoll, removeScannedRoll, submitOrder, reset,
+    scanRoll, removeScannedRoll, updateScannedRollQty, submitOrder, reset,
   }
 })

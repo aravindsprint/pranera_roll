@@ -130,13 +130,45 @@
         <div class="card" v-if="store.scannedRolls.length">
           <h2 class="section-title">Scanned This Session</h2>
           <div class="roll-checklist">
-            <div v-for="r in store.scannedRolls" :key="r.roll_no + '|' + (r.qi_report || '')" class="roll-row roll-row--done">
+            <div v-for="r in store.scannedRolls" :key="rowKey(r)" class="roll-row roll-row--done">
               <i class="pi pi-check-circle"></i>
               <div class="roll-row__body">
                 <div class="roll-row__no">Roll {{ r.roll_no }}</div>
                 <div class="roll-row__meta">{{ r.item_code }} · {{ r.batch_no }} · {{ fmt(r.qty) }} {{ r.uom }}<span v-if="r.qi_report"> · {{ r.qi_report }}</span></div>
+                <div v-if="isQtyEdited(r)" class="roll-row__edited">
+                  <i class="pi pi-pencil"></i> Edited · QI weight {{ fmt(r.roll_weight) }} {{ r.uom }}
+                </div>
+
+                <!-- Inline qty editor — QI Report Details orders only -->
+                <div v-if="editingKey === rowKey(r)" class="qty-edit">
+                  <input
+                    v-model="editQty"
+                    type="number"
+                    inputmode="decimal"
+                    step="0.001"
+                    min="0"
+                    class="form-input qty-edit__input"
+                    @keyup.enter="saveQty(r)"
+                    @keyup.esc="cancelEditQty"
+                  />
+                  <span class="qty-edit__uom">{{ r.uom }}</span>
+                  <button class="btn btn-primary qty-edit__btn" :disabled="savingQty" @click="saveQty(r)">
+                    <i :class="savingQty ? 'pi pi-spin pi-spinner' : 'pi pi-check'"></i>
+                  </button>
+                  <button class="btn btn-outline qty-edit__btn" :disabled="savingQty" @click="cancelEditQty">
+                    <i class="pi pi-times"></i>
+                  </button>
+                </div>
               </div>
-              <button class="btn-remove" @click="onRemoveRoll(r.roll_no, r.qi_report)" title="Remove">
+              <button
+                v-if="canEditQty && editingKey !== rowKey(r)"
+                class="btn-remove btn-edit"
+                @click="startEditQty(r)"
+                title="Edit qty"
+              >
+                <i class="pi pi-pencil"></i>
+              </button>
+              <button v-if="editingKey !== rowKey(r)" class="btn-remove" @click="onRemoveRoll(r.roll_no, r.qi_report)" title="Remove">
                 <i class="pi pi-times"></i>
               </button>
             </div>
@@ -226,7 +258,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { usePickOrderStore } from '@/stores/pickOrder'
@@ -280,6 +312,52 @@ async function onRemoveRoll(rollNo, qiReport = null) {
     await store.removeScannedRoll(rollNo, qiReport)
   } catch (err) {
     scanError.value = err.message
+  }
+}
+
+// ── Edit scanned roll qty (QI Report Details orders only) ────────────────
+// Old QI rolls carry the weight keyed into the QI report, which often
+// differs from the actual roll on the scale — the picker corrects it here.
+const canEditQty = computed(() => store.order?.roll_source === 'QI Report Details')
+const editingKey = ref('')
+const editQty = ref('')
+const savingQty = ref(false)
+
+function rowKey(r) {
+  return r.roll_no + '|' + (r.qi_report || '')
+}
+
+function isQtyEdited(r) {
+  return canEditQty.value && r.roll_weight != null &&
+    Math.abs((Number(r.qty) || 0) - (Number(r.roll_weight) || 0)) > 0.0005
+}
+
+function startEditQty(r) {
+  scanError.value = ''
+  editingKey.value = rowKey(r)
+  editQty.value = Number(r.qty) || ''
+}
+
+function cancelEditQty() {
+  editingKey.value = ''
+  editQty.value = ''
+}
+
+async function saveQty(r) {
+  const qty = Number(editQty.value)
+  if (!qty || qty <= 0) {
+    scanError.value = `Enter a qty greater than zero for Roll ${r.roll_no}`
+    return
+  }
+  savingQty.value = true
+  scanError.value = ''
+  try {
+    await store.updateScannedRollQty(r.roll_no, qty, r.qi_report)
+    cancelEditQty()
+  } catch (err) {
+    scanError.value = err.message
+  } finally {
+    savingQty.value = false
   }
 }
 
@@ -429,6 +507,17 @@ function closeSuccessModal() {
 .roll-row__no { font-weight: 700; font-size: 13px; color: #0f172a; }
 .roll-row--done .roll-row__no { color: #166534; }
 .roll-row__meta { font-size: 12px; color: #64748b; overflow-wrap: anywhere; }
+.roll-row__edited { font-size: 11px; color: #b45309; margin-top: 2px; }
+.roll-row__edited i { font-size: 10px; color: #b45309; }
+.btn-edit:hover { color: #0f6e56; }
+.qty-edit { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.qty-edit__input { flex: 1; min-width: 0; padding: 8px 10px; font-size: 15px; }
+.qty-edit__uom { font-size: 12px; color: #64748b; flex-shrink: 0; }
+.qty-edit__btn {
+  flex-shrink: 0; width: 38px; height: 38px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.qty-edit__btn i { font-size: 14px; color: inherit; }
 
 /* Camera scanner + success pop-ups */
 .modal-overlay {

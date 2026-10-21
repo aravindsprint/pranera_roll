@@ -281,6 +281,13 @@ export const removeScannedRoll = (pickOrder, rollNo, qiReport = null) =>
     pick_order: pickOrder, roll_no: rollNo, qi_report: qiReport
   }).then(r => r.message)
 
+// QI Report Details orders only — corrects a scanned roll's qty (the QI
+// report weight is often off from the actual roll on the scale).
+export const updateScannedRollQty = (pickOrder, rollNo, qty, qiReport = null) =>
+  call('pranera_roll.api.pick_order.update_scanned_roll_qty', {
+    pick_order: pickOrder, roll_no: rollNo, qty, qi_report: qiReport
+  }).then(r => r.message)
+
 // Persists the worker's Source/Target Warehouse choice for this execution
 // session, independent of scanning — so a resumed session (refresh, next
 // shift, different device) shows the same choice instead of snapping back
