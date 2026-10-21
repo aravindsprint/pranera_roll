@@ -719,6 +719,55 @@ def remove_scanned_roll(pick_order, roll_no, qi_report=None):
 
 
 @frappe.whitelist()
+def update_scanned_roll_qty(pick_order, roll_no, qty, qi_report=None):
+    """Lets the worker correct the qty of a persisted (not-yet-submitted)
+    scanned roll — only for Pick Orders whose Roll Source is
+    'QI Report Details'. Old QI rolls carry whatever weight was keyed into
+    the QI report, which is often off from the roll's actual weight on the
+    scale today, so the picker overrides it here.
+
+    Only scanned_rolls.qty changes. roll_weight is left as the original QI
+    weight (kept for reference / audit), and submit_pick_order builds the
+    Roll Wise Pick List and Stock Entry from qty, so the edited figure is
+    what actually moves. The +/-3% tolerance is still enforced on submit
+    against the edited totals."""
+    doc = frappe.get_doc("Roll Pick Assignment", pick_order)
+    _assert_assigned_to_me(doc)
+
+    if _roll_source(doc) != QI_SOURCE:
+        frappe.throw(_("Roll qty can only be edited when Roll Source is 'QI Report Details'"))
+
+    qty = flt(qty, 3)
+    if qty <= 0:
+        frappe.throw(_("Qty must be greater than zero"))
+
+    matches = [
+        r for r in (doc.scanned_rolls or [])
+        if r.roll_no == roll_no and (not qi_report or r.get("qi_report") == qi_report)
+    ]
+    if not matches:
+        frappe.throw(_("Roll {0} was not found in this session").format(roll_no))
+    if len(matches) > 1:
+        frappe.throw(_("Roll {0} matches more than one scanned row — refresh and try again").format(roll_no))
+
+    row = matches[0]
+    row.qty = qty
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+
+    return {
+        "roll_no": row.roll_no,
+        "item_code": row.item_code,
+        "warehouse": row.warehouse,
+        "batch_no": row.batch_no,
+        "qty": row.qty,
+        "uom": row.uom,
+        "roll_weight": row.roll_weight,
+        "qi_report": row.get("qi_report"),
+    }
+
+
+@frappe.whitelist()
 def submit_pick_order(pick_order, posting_date, submit_stock_entry=1):
     """Final submission for a Pick Order Execution session. Builds the
     picked-rolls list from what's persisted server-side (scanned_rolls) —
