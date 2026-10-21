@@ -86,6 +86,59 @@ def get_pick_qty_targets_by_uom(assignment_doc):
     return targets
 
 
+def _stamp_sales_order_on_items(se, sales_order):
+    """RFB/ (To Sales Order) Stock Entries: link every item row back to its
+    Sales Order line, using the same per-row fields the other RFB entries
+    already carry on Stock Entry Detail:
+        sales_order        -> Sales Order (Link)
+        sales_order_ref    -> Sales Order name
+        sales_order_detail -> Sales Order Item row name
+        sales_order_rate   -> that line's rate
+
+    Rows are matched to SO lines by item_code. When an SO has the same item
+    on more than one line, the first line (by idx) that still has
+    undelivered qty wins, falling back to the first line. A row whose item
+    isn't on the SO keeps sales_order / sales_order_ref but no detail/rate.
+    Fields missing on this site are skipped rather than erroring."""
+    if not sales_order:
+        return
+
+    meta = frappe.get_meta("Stock Entry Detail")
+    has = {f: meta.has_field(f) for f in
+           ("sales_order", "sales_order_ref", "sales_order_detail", "sales_order_rate")}
+
+    so_lines = frappe.get_all(
+        "Sales Order Item",
+        filters={"parent": sales_order, "parenttype": "Sales Order"},
+        fields=["name", "item_code", "rate", "qty", "delivered_qty"],
+        order_by="idx asc",
+    )
+    by_item = {}
+    for line in so_lines:
+        by_item.setdefault(line.item_code, []).append(line)
+
+    def _pick_line(item_code):
+        lines = by_item.get(item_code) or []
+        for line in lines:
+            if flt(line.qty) - flt(line.delivered_qty) > 0:
+                return line
+        return lines[0] if lines else None
+
+    for row in se.items:
+        if has["sales_order"]:
+            row.sales_order = sales_order
+        if has["sales_order_ref"]:
+            row.sales_order_ref = sales_order
+        line = _pick_line(row.item_code)
+        if not line:
+            continue
+        if has["sales_order_detail"]:
+            row.sales_order_detail = line.name
+        if has["sales_order_rate"]:
+            # Data field; existing RFB rows store it as e.g. "375", "16"
+            row.sales_order_rate = "{0:g}".format(flt(line.rate))
+
+
 def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                                source_warehouse=None, target_warehouse=None,
                                posting_date=None, date=None, project=None,
@@ -376,6 +429,7 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                 # on the Stock Entry's `sales_order` custom field (Link ->
                 # Sales Order) so the RFB entry is traceable to its order.
                 se.sales_order = document_name
+                _stamp_sales_order_on_items(se, document_name)
             elif pick_type == "From Purchase Order":
                 se.purchase_order = document_name
             elif pick_type in ("To Subcontracting Order", "From Subcontracting Order"):
