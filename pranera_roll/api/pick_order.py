@@ -213,6 +213,66 @@ def _assert_not_stale_client_qi_scan(roll_no, batch_from_qr, allowed_batches):
         ).format(roll_no))
 
 
+def _repack_related_batches(batch, max_hops=6):
+    """All batches linked to `batch` through submitted Repack Stock Entries
+    of the same item, in either direction (source <-> target), including
+    `batch` itself. E.g. -WOC repacked to -WOC-1, part of which was repacked
+    to -WOC-VL, gives {-WOC, -WOC-1, -WOC-VL} for any of the three.
+
+    Reads batch numbers from both Stock Entry Detail.batch_no and the v15
+    Serial and Batch Bundle entries, since either may carry them. Cached
+    per request; callers only reach for it when an exact batch match fails."""
+    if not batch:
+        return set()
+    cache = frappe.local.__dict__.setdefault("_repack_family_cache", {})
+    if batch in cache:
+        return cache[batch]
+
+    family = {batch}
+    frontier = {batch}
+    for _hop in range(max_hops):
+        entries = frappe.db.sql(
+            """
+            SELECT d.parent, d.item_code
+            FROM `tabStock Entry Detail` d
+            INNER JOIN `tabStock Entry` se ON se.name = d.parent
+            WHERE d.batch_no IN %(b)s AND se.docstatus = 1 AND se.purpose = 'Repack'
+            UNION
+            SELECT sbb.voucher_no, sbb.item_code
+            FROM `tabSerial and Batch Entry` sbe
+            INNER JOIN `tabSerial and Batch Bundle` sbb ON sbb.name = sbe.parent
+            INNER JOIN `tabStock Entry` se ON se.name = sbb.voucher_no
+            WHERE sbe.batch_no IN %(b)s AND sbb.voucher_type = 'Stock Entry'
+              AND sbb.docstatus = 1 AND se.docstatus = 1 AND se.purpose = 'Repack'
+            """,
+            {"b": tuple(frontier)},
+        )
+        found = set()
+        for se_name, item_code in entries:
+            found.update(
+                b for (b,) in frappe.db.sql(
+                    """
+                    SELECT d.batch_no FROM `tabStock Entry Detail` d
+                    WHERE d.parent = %(se)s AND d.item_code = %(item)s AND IFNULL(d.batch_no, '') != ''
+                    UNION
+                    SELECT sbe.batch_no FROM `tabSerial and Batch Entry` sbe
+                    INNER JOIN `tabSerial and Batch Bundle` sbb ON sbb.name = sbe.parent
+                    WHERE sbb.voucher_type = 'Stock Entry' AND sbb.voucher_no = %(se)s
+                      AND sbb.item_code = %(item)s AND sbb.docstatus = 1
+                    """,
+                    {"se": se_name, "item": item_code},
+                ) if b
+            )
+        frontier = found - family
+        if not frontier:
+            break
+        family |= frontier
+
+    for b_ in family:
+        cache[b_] = family
+    return family
+
+
 def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
     """Finds an old roll in a submitted QI Report Details' Roll Details.
 
@@ -238,14 +298,25 @@ def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
     if not rows:
         frappe.throw(_("Roll {0} not found in any submitted QI Report Details").format(roll_no))
 
+    # Batches get repacked after QI (e.g. -WOC -> -WOC-1 -> -WOC-VL), so
+    # the QI report's batch, the batch printed on the sticker and the
+    # batch planned on the Pick Order can all differ while still being
+    # the same physical fabric. Compare through the Repack lineage, not
+    # by exact name.
     if batch_from_qr:
-        rows = [r for r in rows if r.batch == batch_from_qr]
+        exact = [r for r in rows if r.batch == batch_from_qr]
+        if not exact:
+            qr_family = _repack_related_batches(batch_from_qr)
+            exact = [r for r in rows if r.batch in qr_family]
+        rows = exact
         if not rows:
             frappe.throw(_(
                 "Roll {0} with batch {1} not found in any submitted QI Report Details"
             ).format(roll_no, batch_from_qr))
     if len(rows) > 1 and allowed_batches:
-        narrowed = [r for r in rows if r.batch in allowed_batches]
+        narrowed = [r for r in rows if r.batch in allowed_batches] or [
+            r for r in rows if _repack_related_batches(r.batch) & set(allowed_batches)
+        ]
         if narrowed:
             rows = narrowed
     if len(rows) > 1:
@@ -255,6 +326,23 @@ def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
         ).format(roll_no, ", ".join(r.qi_report for r in rows)))
 
     row = rows[0]
+
+    # Record the roll against the batch the stock actually sits in now —
+    # the Pick Order's planned batch — when it differs from the QI batch
+    # only because of repacking. The Stock Entry then moves the right batch.
+    row.qi_batch = row.batch
+    if allowed_batches and row.batch not in allowed_batches:
+        candidates = sorted(_repack_related_batches(row.batch) & set(allowed_batches))
+        if batch_from_qr in candidates:
+            candidates = [batch_from_qr]
+        if len(candidates) == 1:
+            row.batch = candidates[0]
+        elif len(candidates) > 1:
+            frappe.throw(_(
+                "Roll {0} (QI batch {1}) was repacked into more than one batch on this "
+                "Pick Order ({2}) — can't tell which one this roll is in"
+            ).format(roll_no, row.batch, ", ".join(candidates)))
+        # no candidates: leave as-is; _record_scan reports the batch mismatch
     uom = row.stock_uom or "Kgs"
     if uom.lower() not in ("kg", "kgs"):
         frappe.throw(_(
