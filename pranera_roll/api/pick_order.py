@@ -213,6 +213,18 @@ def _assert_not_stale_client_qi_scan(roll_no, batch_from_qr, allowed_batches):
         ).format(roll_no))
 
 
+def _save_assignment(doc):
+    """Saves a Roll Pick Assignment. Scan rows' qi_report is a Link to QI
+    Report Details, but collar/cuff rolls come from QI CC Report Details,
+    so skip link validation when any row points at a CC report."""
+    if any(
+        r.get("qi_report") and frappe.db.exists("QI CC Report Details", r.qi_report)
+        for r in (doc.scanned_rolls or [])
+    ):
+        doc.flags.ignore_links = True
+    doc.save(ignore_permissions=True)
+
+
 def _repack_related_batches(batch, max_hops=6):
     """All batches linked to `batch` through submitted Repack Stock Entries
     of the same item, in either direction (source <-> target), including
@@ -280,23 +292,41 @@ def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
     the sticker (or, failing that, the Pick Order's allowed batches) is
     used to pick the right row. Returns a dict shaped like the Roll lookup
     in scan_pick_order_roll, plus qi_report."""
+    # Fabric rolls live in QI Report Details (Roll Details, weight in Kgs);
+    # collar/cuff rolls live in QI CC Report Details (CC Roll Details, counted
+    # in Pcs - accepted_qty, falling back to total_qty). Check both.
     rows = frappe.db.sql(
         """
-        SELECT q.name AS qi_report, q.item_code, q.batch_no AS batch,
-               d.roll_weight, IFNULL(NULLIF(d.stock_uom, ''), q.stock_uom) AS stock_uom
+        SELECT q.name AS qi_report, 'QI Report Details' AS qi_doctype,
+               q.item_code, q.batch_no AS batch, q.creation,
+               d.roll_weight, NULL AS pcs_qty,
+               IFNULL(NULLIF(d.stock_uom, ''), q.stock_uom) AS stock_uom
         FROM `tabRoll Details` d
         INNER JOIN `tabQI Report Details` q ON q.name = d.parent
         WHERE d.parenttype = 'QI Report Details'
           AND d.parentfield = 'roll_details'
           AND d.roll_no = %(roll_no)s
           AND q.docstatus = 1
-        ORDER BY q.creation DESC
+        UNION ALL
+        SELECT q.name, 'QI CC Report Details',
+               q.item_code, q.batch_no, q.creation,
+               d.roll_weight, COALESCE(NULLIF(d.accepted_qty, 0), d.total_qty),
+               IFNULL(NULLIF(d.stock_uom, ''), q.stock_uom)
+        FROM `tabCC Roll Details` d
+        INNER JOIN `tabQI CC Report Details` q ON q.name = d.parent
+        WHERE d.parenttype = 'QI CC Report Details'
+          AND d.parentfield = 'cc_roll_details'
+          AND d.roll_no = %(roll_no)s
+          AND q.docstatus = 1
+        ORDER BY creation DESC
         """,
         {"roll_no": roll_no},
         as_dict=True,
     )
     if not rows:
-        frappe.throw(_("Roll {0} not found in any submitted QI Report Details").format(roll_no))
+        frappe.throw(_(
+            "Roll {0} not found in any submitted QI Report Details or QI CC Report Details"
+        ).format(roll_no))
 
     # Batches get repacked after QI (e.g. -WOC -> -WOC-1 -> -WOC-VL), so
     # the QI report's batch, the batch printed on the sticker and the
@@ -311,7 +341,8 @@ def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
         rows = exact
         if not rows:
             frappe.throw(_(
-                "Roll {0} with batch {1} not found in any submitted QI Report Details"
+                "Roll {0} with batch {1} not found in any submitted QI Report Details "
+                "or QI CC Report Details"
             ).format(roll_no, batch_from_qr))
     if len(rows) > 1 and allowed_batches:
         narrowed = [r for r in rows if r.batch in allowed_batches] or [
@@ -343,15 +374,22 @@ def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
                 "Pick Order ({2}) — can't tell which one this roll is in"
             ).format(roll_no, row.batch, ", ".join(candidates)))
         # no candidates: leave as-is; _record_scan reports the batch mismatch
-    uom = row.stock_uom or "Kgs"
-    if uom.lower() not in ("kg", "kgs"):
-        frappe.throw(_(
-            "Roll {0} (QI Report {1}) is in {2} — only Kgs rolls can be picked "
-            "from QI Report Details, since the QI roll row only carries a weight"
-        ).format(roll_no, row.qi_report, uom))
-    row.stock_uom = uom
+    uom = row.stock_uom or ("Pcs" if row.qi_doctype == "QI CC Report Details" else "Kgs")
     row.project = None
     row.total_qty = None
+    if uom.lower() == "pcs":
+        # _record_scan takes total_qty as the qty for Pcs rolls
+        if not flt(row.pcs_qty):
+            frappe.throw(_(
+                "Roll {0} ({1}) has no piece count recorded"
+            ).format(roll_no, row.qi_report))
+        uom = "Pcs"
+        row.total_qty = flt(row.pcs_qty)
+    elif uom.lower() not in ("kg", "kgs"):
+        frappe.throw(_(
+            "Roll {0} ({1}) is in {2} — only Kgs or Pcs rolls can be picked"
+        ).format(roll_no, row.qi_report, uom))
+    row.stock_uom = uom
     return row
 
 
@@ -517,7 +555,7 @@ def update_pick_order_execution(pick_order, source_warehouse=None, target_wareho
             row.warehouse = batch_warehouse_overrides.get(row.batch_no) or source_warehouse
         if target_warehouse is not None:
             doc.execution_target_warehouse = target_warehouse
-        doc.save(ignore_permissions=True)
+        _save_assignment(doc)
     else:
         # No scanned rolls to touch — keep the previous lightweight,
         # non-modified-bumping writes for a plain warehouse selection.
@@ -779,7 +817,7 @@ def _record_scan(doc, roll_no, roll, source_warehouse):
         "scanned_at": now_datetime(),
     })
     doc.execution_source_warehouse = source_warehouse
-    doc.save(ignore_permissions=True)
+    _save_assignment(doc)
     frappe.db.commit()
 
     return result
@@ -803,7 +841,7 @@ def remove_scanned_roll(pick_order, roll_no, qi_report=None):
     if len(doc.scanned_rolls) == before:
         frappe.throw(_("Roll {0} was not found in this session").format(roll_no))
 
-    doc.save(ignore_permissions=True)
+    _save_assignment(doc)
     frappe.db.commit()
     return {"success": True}
 
@@ -842,7 +880,7 @@ def update_scanned_roll_qty(pick_order, roll_no, qty, qi_report=None):
 
     row = matches[0]
     row.qty = qty
-    doc.save(ignore_permissions=True)
+    _save_assignment(doc)
     frappe.db.commit()
 
     return {
@@ -915,7 +953,7 @@ def submit_pick_order(pick_order, posting_date, submit_stock_entry=1):
     # in-progress scan session.
     doc.reload()
     doc.set("scanned_rolls", [])
-    doc.save(ignore_permissions=True)
+    _save_assignment(doc)
     frappe.db.commit()
 
     return result

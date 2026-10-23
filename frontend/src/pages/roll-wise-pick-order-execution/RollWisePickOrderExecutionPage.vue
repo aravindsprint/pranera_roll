@@ -328,7 +328,9 @@ function rowKey(r) {
 }
 
 function isQtyEdited(r) {
-  return canEditQty.value && r.roll_weight != null &&
+  // Only Kgs rows compare like-for-like with the QI weight; collar/cuff
+  // (QI CC) rows are counted in Pcs while roll_weight is still in Kgs.
+  return canEditQty.value && r.roll_weight != null && (r.uom || 'Kgs').toLowerCase().startsWith('kg') &&
     Math.abs((Number(r.qty) || 0) - (Number(r.roll_weight) || 0)) > 0.0005
 }
 
