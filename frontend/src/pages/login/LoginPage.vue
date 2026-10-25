@@ -41,6 +41,9 @@
           </button>
         </div>
 
+        <div v-if="route.query.expired && !errorMsg" class="error-box">
+          Your session expired. Please log in again.
+        </div>
         <div v-if="errorMsg" class="error-box">
           ⚠️ {{ errorMsg }}
         </div>
