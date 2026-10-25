@@ -85,6 +85,68 @@ export function isLoggedIn() {
 }
 
 // ── Core fetch helpers ────────────────────────────────────────────────────
+// ── Session expiry ────────────────────────────────────────────────────────
+// The knit endpoints no longer allow Guest access. When a session expires
+// (or is logged out elsewhere) the server answers 401/403 — previously those
+// calls silently succeeded as "Guest", which is how 210 rolls ended up owned
+// by Guest. Callers (notably the offline sync queue) must be able to tell
+// "your session is gone, log in again" apart from a real server/validation
+// error, so they can keep the work instead of marking it failed.
+export class SessionExpiredError extends Error {
+  constructor(message = 'Your session has expired. Please log in again.') {
+    super(message)
+    this.name = 'SessionExpiredError'
+  }
+}
+
+export function isSessionExpiredError(err) {
+  return !!err && (err instanceof SessionExpiredError || err.name === 'SessionExpiredError')
+}
+
+let _expiryAnnounced = false
+
+function markSessionExpired() {
+  if (window.__FRAPPE_SESSION__) window.__FRAPPE_SESSION__.user = 'Guest'
+  resetCSRF()
+  if (!_expiryAnnounced) {
+    _expiryAnnounced = true
+    try { window.dispatchEvent(new Event('knit:session-expired')) } catch { /* ignore */ }
+  }
+}
+
+// Ask the server who we are. Only a definite "Guest"/unauthenticated answer
+// counts as expired — a network failure here is NOT treated as a logout.
+async function sessionIsGone() {
+  try {
+    const r = await fetch('/api/method/frappe.auth.get_logged_user', {
+      credentials: 'include', cache: 'no-store'
+    })
+    if (r.status === 401 || r.status === 403) return true
+    if (!r.ok) return false
+    const d = await r.json().catch(() => ({}))
+    return !d?.message || d.message === 'Guest'
+  } catch {
+    return false
+  }
+}
+
+// Throws SessionExpiredError when a failed response is due to a missing
+// session. A 403 can also mean "logged in but not permitted", so confirm
+// with the server before deciding.
+async function throwIfSessionExpired(res, data) {
+  if (res.ok) return
+  const authish = res.status === 401 || res.status === 403 ||
+    /AuthenticationError|SessionExpired|CSRFTokenError/.test(String(data?.exc_type || data?.exc || ''))
+  if (!authish) return
+  if (await sessionIsGone()) {
+    markSessionExpired()
+    throw new SessionExpiredError()
+  }
+}
+
+// Called after a successful login so a later expiry is announced again.
+export function clearSessionExpiredFlag() { _expiryAnnounced = false }
+
 export async function call(method, args = {}) {
   const token = await ensureCSRF()
   const body = new URLSearchParams()
@@ -108,7 +170,8 @@ export async function call(method, args = {}) {
     credentials: 'include'
   })
   signalServerReachable(res)
-  const data = await res.json()
+  const data = await res.json().catch(() => ({}))
+  await throwIfSessionExpired(res, data)
   if (!res.ok || data.exc) throw new Error(extractServerError(data, res.statusText))
   return data
 }
@@ -156,7 +219,8 @@ export async function getList(doctype, { filters = [], orFilters = [], fields = 
     credentials: 'include'
   })
   signalServerReachable(res)
-  const data = await res.json()
+  const data = await res.json().catch(() => ({}))
+  await throwIfSessionExpired(res, data)
   if (!res.ok) throw new Error(data.exc || res.statusText)
   return data.data || []
 }
@@ -185,7 +249,8 @@ export async function getAllList(doctype, { filters = [], orFilters = [], fields
       credentials: 'include'
     })
     signalServerReachable(res)
-    const data = await res.json()
+    const data = await res.json().catch(() => ({}))
+    await throwIfSessionExpired(res, data)
     if (!res.ok) throw new Error(data.exc || res.statusText)
     const rows = data.data || []
     all.push(...rows)
@@ -200,7 +265,8 @@ export async function getDoc(doctype, name) {
     `/api/resource/${encodeURIComponent(doctype)}/${encodeURIComponent(name)}`,
     { credentials: 'include' }
   )
-  const data = await res.json()
+  const data = await res.json().catch(() => ({}))
+  await throwIfSessionExpired(res, data)
   if (!res.ok) throw new Error(data.exc || res.statusText)
   return data.data
 }
@@ -213,7 +279,8 @@ export async function createDoc(doctype, doc) {
     body: JSON.stringify(doc),
     credentials: 'include'
   })
-  const data = await res.json()
+  const data = await res.json().catch(() => ({}))
+  await throwIfSessionExpired(res, data)
   if (!res.ok) throw new Error(data.exc || res.statusText)
   return data.data
 }
@@ -229,7 +296,8 @@ export async function updateDoc(doctype, name, doc) {
       credentials: 'include'
     }
   )
-  const data = await res.json()
+  const data = await res.json().catch(() => ({}))
+  await throwIfSessionExpired(res, data)
   if (!res.ok) throw new Error(data.exc || res.statusText)
   return data.data
 }

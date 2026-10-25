@@ -22,10 +22,22 @@
 
 <script setup>
 import { onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useSync, isOnline, isSyncing } from '@/composables/useSync'
 import { initCSRF, isLoggedIn } from '@/api/frappe'
 useSync()
+
+// Session expired (an API call came back unauthenticated): send the user to
+// login and bring them back to the same page afterwards.
+const router = useRouter()
+window.addEventListener('knit:session-expired', () => {
+  auth.refreshSession?.()
+  const current = router.currentRoute.value
+  if (current.path !== '/roll-app/login') {
+    router.push({ path: '/roll-app/login', query: { redirect: current.fullPath, expired: '1' } })
+  }
+})
 
 const THEME_COLORS = {
   green:  '#0f6e56',
