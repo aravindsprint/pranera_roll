@@ -225,9 +225,15 @@ def _save_assignment(doc):
     doc.save(ignore_permissions=True)
 
 
+def _base_article(item_code):
+    """'SKF11772/WHITE/14.5X1.5' -> 'SKF11772'."""
+    return (item_code or "").split("/", 1)[0].strip()
+
+
 def _repack_related_batches(batch, max_hops=6):
     """All batches linked to `batch` through submitted Repack Stock Entries
-    of the same item, in either direction (source <-> target), including
+    of the same item or the same base article (colour change), in either
+    direction (source <-> target), including
     `batch` itself. E.g. -WOC repacked to -WOC-1, part of which was repacked
     to -WOC-VL, gives {-WOC, -WOC-1, -WOC-VL} for any of the three.
 
@@ -266,18 +272,31 @@ def _repack_related_batches(batch, max_hops=6):
         )
         found = set()
         for se_name, item_code in entries:
+            # A repack may change the item code as well as the batch (a
+            # colour change: SKF11772/WHITE/14.5X1.5 -> SKF11772/CRICKET
+            # IVORY/14.5X1.5, RP/26/07070). Link batches of the same base
+            # article (the code before the first "/"), so the collar and cuff
+            # repacked in the same entry (SKF11771 vs SKF11772) stay apart.
+            base = _base_article(item_code)
+            se_rows = frappe.db.sql(
+                "SELECT d.item_code, d.batch_no FROM `tabStock Entry Detail` d WHERE d.parent = %(se)s",
+                {"se": se_name},
+            )
+            items = tuple({i for i, _b in se_rows if i == item_code or _base_article(i) == base})
+            if not items:
+                continue
+            found.update(b for i, b in se_rows if b and i in items)
+            # Filtering the bundle lookup by item keeps it on an index — by
+            # voucher_no alone it takes several seconds per repack.
             found.update(
                 b for (b,) in frappe.db.sql(
                     """
-                    SELECT d.batch_no FROM `tabStock Entry Detail` d
-                    WHERE d.parent = %(se)s AND d.item_code = %(item)s AND IFNULL(d.batch_no, '') != ''
-                    UNION
                     SELECT sbe.batch_no FROM `tabSerial and Batch Entry` sbe
                     INNER JOIN `tabSerial and Batch Bundle` sbb ON sbb.name = sbe.parent
                     WHERE sbb.voucher_type = 'Stock Entry' AND sbb.voucher_no = %(se)s
-                      AND sbb.item_code = %(item)s AND sbb.docstatus = 1
+                      AND sbb.item_code IN %(items)s AND sbb.docstatus = 1
                     """,
-                    {"se": se_name, "item": item_code},
+                    {"se": se_name, "items": items},
                 ) if b
             )
         frontier = found - family
@@ -373,6 +392,11 @@ def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
             candidates = [batch_from_qr]
         if len(candidates) == 1:
             row.batch = candidates[0]
+            # The repack may also have changed the item (colour change), so
+            # take the item from the batch the stock now sits in — the Stock
+            # Entry must move that item, not the one on the QI report.
+            row.qi_item_code = row.item_code
+            row.item_code = frappe.db.get_value("Batch", row.batch, "item") or row.item_code
         elif len(candidates) > 1:
             frappe.throw(_(
                 "Roll {0} (QI batch {1}) was repacked into more than one batch on this "
