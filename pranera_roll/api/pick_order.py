@@ -225,9 +225,15 @@ def _save_assignment(doc):
     doc.save(ignore_permissions=True)
 
 
+def _base_article(item_code):
+    """'SKF11772/WHITE/14.5X1.5' -> 'SKF11772'."""
+    return (item_code or "").split("/", 1)[0].strip()
+
+
 def _repack_related_batches(batch, max_hops=6):
     """All batches linked to `batch` through submitted Repack Stock Entries
-    of the same item, in either direction (source <-> target), including
+    of the same item or the same base article (colour change), in either
+    direction (source <-> target), including
     `batch` itself. E.g. -WOC repacked to -WOC-1, part of which was repacked
     to -WOC-VL, gives {-WOC, -WOC-1, -WOC-VL} for any of the three.
 
@@ -266,18 +272,31 @@ def _repack_related_batches(batch, max_hops=6):
         )
         found = set()
         for se_name, item_code in entries:
+            # A repack may change the item code as well as the batch (a
+            # colour change: SKF11772/WHITE/14.5X1.5 -> SKF11772/CRICKET
+            # IVORY/14.5X1.5, RP/26/07070). Link batches of the same base
+            # article (the code before the first "/"), so the collar and cuff
+            # repacked in the same entry (SKF11771 vs SKF11772) stay apart.
+            base = _base_article(item_code)
+            se_rows = frappe.db.sql(
+                "SELECT d.item_code, d.batch_no FROM `tabStock Entry Detail` d WHERE d.parent = %(se)s",
+                {"se": se_name},
+            )
+            items = tuple({i for i, _b in se_rows if i == item_code or _base_article(i) == base})
+            if not items:
+                continue
+            found.update(b for i, b in se_rows if b and i in items)
+            # Filtering the bundle lookup by item keeps it on an index — by
+            # voucher_no alone it takes several seconds per repack.
             found.update(
                 b for (b,) in frappe.db.sql(
                     """
-                    SELECT d.batch_no FROM `tabStock Entry Detail` d
-                    WHERE d.parent = %(se)s AND d.item_code = %(item)s AND IFNULL(d.batch_no, '') != ''
-                    UNION
                     SELECT sbe.batch_no FROM `tabSerial and Batch Entry` sbe
                     INNER JOIN `tabSerial and Batch Bundle` sbb ON sbb.name = sbe.parent
                     WHERE sbb.voucher_type = 'Stock Entry' AND sbb.voucher_no = %(se)s
-                      AND sbb.item_code = %(item)s AND sbb.docstatus = 1
+                      AND sbb.item_code IN %(items)s AND sbb.docstatus = 1
                     """,
-                    {"se": se_name, "item": item_code},
+                    {"se": se_name, "items": items},
                 ) if b
             )
         frontier = found - family
@@ -288,6 +307,87 @@ def _repack_related_batches(batch, max_hops=6):
     for b_ in family:
         cache[b_] = family
     return family
+
+
+def _latest_repack(roll_no, batch, item_code, allowed_batches=None, max_hops=8):
+    """(batch, item_code) a roll sits in after its LAST repack.
+
+    From `batch`, take the most recent submitted Repack that consumed it AND
+    produced the same base article (see _base_article — colour changes
+    count, e.g. SKF11772/WHITE -> SKF11772/CRICKET IVORY in RP/26/07070).
+    Repacks with no such output are skipped: bulk cutting-waste repacks
+    (RP/26/07041) consume a little of hundreds of batches without the roll
+    ever being in them. Repeat from that output until nothing later applies.
+
+    If the last repack has several same-article outputs, the one on the
+    Pick Order wins; otherwise it stops and asks rather than guessing."""
+    seen = {batch}
+    path = [(batch, item_code)]
+    for _hop in range(max_hops):
+        repacks = frappe.db.sql(
+            """
+            SELECT DISTINCT se.name, se.posting_date, se.posting_time, se.creation
+            FROM `tabStock Entry` se
+            INNER JOIN `tabStock Entry Detail` d ON d.parent = se.name
+            WHERE se.docstatus = 1 AND se.purpose = 'Repack'
+              AND IFNULL(d.s_warehouse, '') != ''
+              AND (d.batch_no = %(b)s OR d.serial_and_batch_bundle IN (
+                    SELECT sbe.parent FROM `tabSerial and Batch Entry` sbe
+                    WHERE sbe.batch_no = %(b)s))
+            ORDER BY se.posting_date DESC, se.posting_time DESC, se.creation DESC
+            """,
+            {"b": batch},
+            as_dict=True,
+        )
+        base = _base_article(item_code)
+        nxt = None
+        for se in repacks:
+            outs = set()
+            for r in frappe.db.sql(
+                """
+                SELECT d.item_code, d.batch_no, d.serial_and_batch_bundle
+                FROM `tabStock Entry Detail` d
+                WHERE d.parent = %(se)s AND IFNULL(d.t_warehouse, '') != ''
+                """,
+                {"se": se.name},
+                as_dict=True,
+            ):
+                if _base_article(r.item_code) != base:
+                    continue
+                if r.batch_no:
+                    outs.add((r.batch_no, r.item_code))
+                elif r.serial_and_batch_bundle:
+                    outs.update(
+                        (b, r.item_code) for (b,) in frappe.db.sql(
+                            "SELECT batch_no FROM `tabSerial and Batch Entry` WHERE parent = %s",
+                            r.serial_and_batch_bundle,
+                        ) if b
+                    )
+            outs = sorted(o for o in outs if o[0] not in seen)
+            if not outs:
+                continue
+            if len(outs) > 1 and allowed_batches:
+                outs = [o for o in outs if o[0] in allowed_batches] or outs
+            if len(outs) > 1:
+                frappe.throw(_(
+                    "Roll {0}: batch {1} was repacked by {2} into more than one batch ({3}) "
+                    "— can't tell which one this roll is in. Add the right batch to the Pick Order."
+                ).format(roll_no, batch, se.name, ", ".join(b for b, _i in outs)))
+            nxt = outs[0]
+            break
+        if not nxt:
+            break
+        batch, item_code = nxt
+        seen.add(batch)
+        path.append((batch, item_code))
+
+    # If the Pick Order explicitly plans an earlier batch of this chain (not
+    # the latest), honour the plan: use the latest batch that is on it.
+    if allowed_batches and path[-1][0] not in allowed_batches:
+        planned = [p for p in path if p[0] in allowed_batches]
+        if planned:
+            return planned[-1]
+    return path[-1]
 
 
 def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
@@ -367,12 +467,27 @@ def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
     # the Pick Order's planned batch — when it differs from the QI batch
     # only because of repacking. The Stock Entry then moves the right batch.
     row.qi_batch = row.batch
+    row.qi_item_code = row.item_code
+
+    # Always fetch the roll's details from its LAST repack: follow the QI
+    # batch forward through every later Repack that turned it into the same
+    # article (colour changes included), and record that batch + item.
+    latest_batch, latest_item = _latest_repack(roll_no, row.batch, row.item_code, allowed_batches)
+    if latest_batch != row.batch:
+        row.batch, row.item_code = latest_batch, latest_item
+
+    # Fallback for older plans: the Pick Order names a batch from the same
+    # repack family that isn't the latest one.
     if allowed_batches and row.batch not in allowed_batches:
         candidates = sorted(_repack_related_batches(row.batch) & set(allowed_batches))
         if batch_from_qr in candidates:
             candidates = [batch_from_qr]
         if len(candidates) == 1:
             row.batch = candidates[0]
+            # The repack may also have changed the item (colour change), so
+            # take the item from the batch the stock now sits in — the Stock
+            # Entry must move that item, not the one on the QI report.
+            row.item_code = frappe.db.get_value("Batch", row.batch, "item") or row.item_code
         elif len(candidates) > 1:
             frappe.throw(_(
                 "Roll {0} (QI batch {1}) was repacked into more than one batch on this "
