@@ -144,6 +144,35 @@
               <span>Scan</span>
             </button>
           </div>
+          <!-- Type a roll number: for stickers whose QR has no roll number
+               (item#batch only, e.g. reprinted after a repack) or won't scan. -->
+          <div v-if="pendingSticker" class="hint-text" style="margin-top:8px">
+            <i class="pi pi-info-circle"></i>
+            <span>This sticker's QR has no roll number (batch {{ pendingStickerBatch }}). Type the roll number printed on it.</span>
+          </div>
+          <div class="scan-row" style="margin-top:8px; display:flex; gap:8px">
+            <input
+              ref="manualRollInput"
+              v-model="manualRoll"
+              type="text"
+              inputmode="numeric"
+              class="form-input"
+              style="flex:1"
+              :placeholder="pendingSticker ? 'Roll number for this sticker' : 'Or type roll no'"
+              :disabled="!store.sourceWarehouse || addingManual"
+              @keyup.enter="addManualRoll"
+            />
+            <button
+              class="btn btn-primary"
+              @click="addManualRoll"
+              :disabled="!store.sourceWarehouse || !manualRoll.trim() || addingManual"
+            >
+              Add
+            </button>
+            <button v-if="pendingSticker" class="btn" @click="clearPendingSticker" :disabled="addingManual">
+              <i class="pi pi-times"></i>
+            </button>
+          </div>
           <div class="hint-text">
             <i class="pi pi-info-circle"></i>
             <span>Scan freely until the total lands within the tolerance band above — each roll is validated as you scan it.</span>
@@ -436,10 +465,51 @@ async function onCameraScanSuccess(decodedText) {
   await stopCameraScanner()
   showScannerModal.value = false
   scanError.value = ''
+  const raw = String(decodedText || '').trim()
+  const parts = raw.split('#')
+  if (parts.length === 2 && parts[1].trim()) {
+    // item#batch only — no roll number on this QR. Keep the sticker (it
+    // carries the batch) and ask for the roll number printed on it.
+    pendingSticker.value = raw
+    manualRoll.value = ''
+    await nextTick()
+    manualRollInput.value?.focus()
+    return
+  }
+  clearPendingSticker()
   try {
     await store.scanRoll(decodedText)
   } catch (err) {
     scanError.value = err.message
+  }
+}
+
+// ── Typed roll number ──────────────────────────────────────────────────────
+const manualRoll = ref('')
+const manualRollInput = ref(null)
+const addingManual = ref(false)
+const pendingSticker = ref('')     // "item#batch" from a QR with no roll number
+const pendingStickerBatch = computed(() => pendingSticker.value.split('#')[1] || '')
+
+function clearPendingSticker() {
+  pendingSticker.value = ''
+}
+
+async function addManualRoll() {
+  const roll = manualRoll.value.trim()
+  if (!roll || addingManual.value) return
+  scanError.value = ''
+  addingManual.value = true
+  try {
+    // With a pending item#batch sticker, send "item#batch#roll" so the
+    // server still gets the sticker's batch to pick the right QI report.
+    await store.scanRoll(pendingSticker.value ? `${pendingSticker.value}#${roll}` : roll)
+    manualRoll.value = ''
+    clearPendingSticker()
+  } catch (err) {
+    scanError.value = err.message
+  } finally {
+    addingManual.value = false
   }
 }
 

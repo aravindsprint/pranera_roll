@@ -183,6 +183,16 @@ def _parse_scanned_value(value, roll_source):
     """
     value = (value or "").strip()
     parts = [p.strip() for p in value.split("#")]
+    if len(parts) == 2:
+        # item_code#batch only — e.g. a label reprinted after a repack
+        # (roll 145664: "SKF11945A/WHITE/60OW/W.AM#26PTIN1543/26-10167-1").
+        # It names the batch but not the roll, so there is nothing to look
+        # up; ask for the roll number instead of a misleading "not found".
+        # The app then resends "<sticker>#<typed roll>", which keeps the batch.
+        frappe.throw(_(
+            "This sticker has no roll number (it only has item {0} and batch {1}). "
+            "Type the roll number printed on the sticker."
+        ).format(parts[0], parts[1]), title=_("Roll number missing"))
     if len(parts) < 3:
         return value, None
     if roll_source == QI_SOURCE:
