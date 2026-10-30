@@ -236,7 +236,12 @@ def _repack_related_batches(batch, max_hops=6):
     per request; callers only reach for it when an exact batch match fails."""
     if not batch:
         return set()
-    cache = frappe.local.__dict__.setdefault("_repack_family_cache", {})
+    # frappe.local is a werkzeug Local: it has no __dict__, so store the
+    # per-request cache as a plain attribute instead.
+    cache = getattr(frappe.local, "_repack_family_cache", None)
+    if cache is None:
+        cache = {}
+        frappe.local._repack_family_cache = cache
     if batch in cache:
         return cache[batch]
 
