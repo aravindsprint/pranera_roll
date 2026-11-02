@@ -22,6 +22,9 @@
           <button class="ah-link" :class="{ 'ah-link--active': active === 'my-pick-orders' || active === 'pick-execution' }" @click="go('/roll-app/my-pick-orders')">
             <span class="ah-link__icon">✅</span><span>My Pick Orders</span>
           </button>
+          <button class="ah-link" :class="{ 'ah-link--active': active === 'create-pick-order' }" @click="go('/roll-app/create-pick-order')">
+            <span class="ah-link__icon">📝</span><span>Create Pick Order</span>
+          </button>
           <button class="ah-link" :class="{ 'ah-link--active': active === 'verify-rolls' }" @click="go('/roll-app/verify-rolls')">
             <span class="ah-link__icon">🔎</span><span>Verify Rolls</span>
           </button>
@@ -35,6 +38,9 @@
           </button>
           <button class="ah-link" :class="{ 'ah-link--active': active === 'qi-finish-rolls' }" @click="go('/roll-app/qi-finish-rolls')">
             <span class="ah-link__icon">🏷️</span><span>QI Finish Rolls</span>
+          </button>
+          <button class="ah-link" :class="{ 'ah-link--active': active === 'stock' }" @click="go('/roll-app/stock')">
+            <span class="ah-link__icon">📦</span><span>Stock</span>
           </button>
         </nav>
 

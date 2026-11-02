@@ -452,3 +452,28 @@ export const createVerifiedTransfer = (stockEntry, rolls, postingDate, submit = 
   call(`${VR}.create_verified_transfer`, {
     stock_entry: stockEntry, rolls, posting_date: postingDate, submit: submit ? 1 : 0,
   }).then(r => r.message)
+
+// ── Create Pick Order (supervisor side) ─────────────────────────────────────
+// pranera_roll/api/pick_order.py — ported from pranera_knit.
+export const searchWorkOrdersForPickOrder = (txt) =>
+  call('pranera_roll.api.pick_order.search_work_orders', { txt }).then(r => r.message || [])
+
+export const searchSalesOrdersForPickOrder = (txt) =>
+  call('pranera_roll.api.pick_order.search_sales_orders', { txt }).then(r => r.message || [])
+
+export const searchBatchesForPickOrder = (txt) =>
+  call('pranera_roll.api.pick_order.search_batches', { txt }).then(r => r.message || [])
+
+export const searchAssignableUsers = (txt) =>
+  call('pranera_roll.api.pick_order.search_assignable_users', { txt }).then(r => r.message || [])
+
+export const createPickOrder = (payload) =>
+  call('pranera_roll.api.pick_order.create_pick_order', payload).then(r => r.message)
+
+// ── Stock page ───────────────────────────────────────────────────────────────
+// pranera_roll/api/stock.py — ledger balances per warehouse, split into rolls.
+export const getWarehouseStock = (warehouse) =>
+  call('pranera_roll.api.stock.get_warehouse_stock', { warehouse }).then(r => r.message)
+
+export const resolveStockScan = (value) =>
+  call('pranera_roll.api.stock.resolve_scan', { value }).then(r => r.message)

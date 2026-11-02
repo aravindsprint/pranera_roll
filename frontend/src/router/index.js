@@ -20,6 +20,8 @@ const routes = [
   { path: '/roll-app/rolls',          component: RollsPage },
 
   { path: '/roll-app/qi-finish-rolls', component: () => import('@/pages/qi-finish-rolls/QIFinishRollsPage.vue') },
+  { path: '/roll-app/create-pick-order', component: () => import('@/pages/create-pick-order/CreatePickOrderPage.vue') },
+  { path: '/roll-app/stock',          component: () => import('@/pages/stock/StockPage.vue') },
   { path: '/roll-app/verify-rolls',   component: () => import('@/pages/verify-rolls/VerifyRollsPage.vue') },
 
   // Opened from a row on My Pick Orders (not in the menu itself)

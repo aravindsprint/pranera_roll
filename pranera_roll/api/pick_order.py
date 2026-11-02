@@ -6,8 +6,11 @@ Copied from pranera_knit/api/pick_order.py for the standalone Roll app —
 only the worker-side execution endpoints used by "My Pick Orders" and
 "Pick Order Execution" are kept (get_my_pick_orders, get_pick_order_detail,
 update_pick_order_execution, scan_pick_order_roll, remove_scanned_roll,
-submit_pick_order). The supervisor-side "Create Pick Order" endpoints are
-not part of this app. References below to "knit.py" now mean
+submit_pick_order) — plus the supervisor-side "Create Pick Order"
+endpoints (search_work_orders, search_sales_orders, search_batches,
+search_assignable_users, create_pick_order). create_pick_order inserts and
+submits with normal permissions, so only users allowed to create/submit
+Roll Pick Assignment can use it. References below to "knit.py" now mean
 api/roll_pick.py in this app.
 
 Roll Pick Assignment is a purpose-built doctype owned entirely by this
@@ -1250,4 +1253,173 @@ def submit_pick_order(pick_order, posting_date, submit_stock_entry=1):
 # in this app have a history of existing only on production and never
 # being fixture-exported, breaking on any fresh bench.
 
+@frappe.whitelist()
+def search_work_orders(txt=None):
+    filters = {}
+    if txt:
+        filters["name"] = ["like", f"%{txt}%"]
+    return frappe.get_all(
+        "Work Order",
+        filters=filters,
+        fields=["name", "production_item", "status", "project"],
+        limit=50,
+        order_by="modified desc",
+    )
 
+
+@frappe.whitelist()
+def search_sales_orders(txt=None):
+    filters = {"docstatus": 1}
+    if txt:
+        filters["name"] = ["like", f"%{txt}%"]
+    return frappe.get_all(
+        "Sales Order",
+        filters=filters,
+        fields=["name", "customer", "status"],
+        limit=50,
+        order_by="modified desc",
+    )
+
+
+@frappe.whitelist()
+def search_batches(txt=None):
+    filters = {}
+    if txt:
+        filters["name"] = ["like", f"%{txt}%"]
+    return frappe.get_all(
+        "Batch",
+        filters=filters,
+        fields=["name", "item", "batch_qty"],
+        limit=50,
+        order_by="modified desc",
+    )
+
+
+@frappe.whitelist()
+def search_assignable_users(txt=None):
+    filters = {"enabled": 1}
+    if txt:
+        filters["full_name"] = ["like", f"%{txt}%"]
+    return frappe.get_all(
+        "User",
+        filters=filters,
+        fields=["name", "full_name"],
+        limit=30,
+        order_by="full_name asc",
+    )
+
+
+@frappe.whitelist()
+def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to, pick_qty=None,
+                       document_name=None, project=None, remarks=None, sales_order=None,
+                       batch_items=None, purchase_order=None, subcontracting_order=None,
+                       roll_source=None, outward_request=None):
+    """Creates + submits a Roll Pick Assignment.
+
+    outward_request: optional — links the Assignment to an Outward
+    Request so that request's Status moves to "Roll Pick Assigned" (and
+    on through Picked / Completed, see outward_request_events.py).
+
+    For "From Work Order" / "Manual Roll Pick", pick_qty is the
+    supervisor-entered target weight, as before.
+
+    For "From Batch" / "To Sales Order", pick_qty is NOT taken from the
+    caller — it's derived from the batch_items rows (sum of qty), mirroring
+    Roll Pick Assignment.set_pick_qty_from_batch_items() which recomputes
+    the same total server-side on save. "To Sales Order" additionally
+    requires a Sales Order to link.
+
+    "To Work Order" is a middle case: batch_items is OPTIONAL. Leave it
+    empty and this behaves exactly like "From Work Order" — supervisor
+    sets a free-scan target weight, worker can scan any roll belonging to
+    the Work Order's own manufactured finished goods. Add one or more
+    Batch/Qty rows and the pick gets restricted to exactly those
+    batches — pick_qty is then derived from their sum (same as "From
+    Batch"), and scan_pick_order_roll() enforces the roll's batch is one
+    of the named ones instead of just "any batch this Work Order
+    produced". One row covers the single-batch case; multiple rows cover
+    the multi-batch case — same child table either way.
+    """
+    if not assigned_to:
+        frappe.throw(_("Assigned To is required"))
+
+    batch_items = frappe.parse_json(batch_items) if isinstance(batch_items, str) else (batch_items or [])
+    mandatory_batch_items_types = ("From Batch", "To Sales Order")
+    # "To Subcontracting Order": optional too — an Outward Request against
+    # a subcontracting PO passes its batch rows here, which gives the pick
+    # per-UOM targets (Kgs fabric + Pcs collars/cuffs) and restricts scans
+    # to exactly those batches.
+    optional_batch_items_types = ("To Work Order", "To Subcontracting Order")
+    uses_batch_items = pick_type in mandatory_batch_items_types or (
+        pick_type in optional_batch_items_types and bool(batch_items)
+    )
+
+    if uses_batch_items:
+        if pick_type in mandatory_batch_items_types and not batch_items:
+            frappe.throw(_("Add at least one Batch / Qty row"))
+        for row in batch_items:
+            if not row.get("batch") or float(row.get("qty") or 0) <= 0:
+                frappe.throw(_("Each row needs a Batch and a Qty greater than zero"))
+        pick_qty = sum(float(row.get("qty") or 0) for row in batch_items)
+    else:
+        pick_qty = float(pick_qty or 0)
+        if pick_qty <= 0:
+            frappe.throw(_("Pick Qty must be greater than zero"))
+
+    if pick_type == "To Sales Order" and not sales_order:
+        frappe.throw(_("Sales Order is required for a 'To Sales Order' pick"))
+    if pick_type == "To Subcontracting Order" and not subcontracting_order:
+        frappe.throw(_("Subcontracting Order is required for a 'To Subcontracting Order' pick"))
+
+    company = frappe.db.get_value("Warehouse", source_warehouse, "company")
+    if not company:
+        frappe.throw(_("Could not determine Company from Source Warehouse"))
+
+    doc = frappe.new_doc("Roll Pick Assignment")
+    doc.company = company
+    doc.status = "Pending"
+    doc.pick_type = pick_type
+    doc.source_warehouse = source_warehouse
+    doc.target_warehouse = target_warehouse
+    doc.assigned_to = assigned_to
+    doc.pick_qty = pick_qty
+    if roll_source:
+        if roll_source not in ("Roll", QI_SOURCE):
+            frappe.throw(_("Roll Source must be 'Roll' or '{0}'").format(QI_SOURCE))
+        doc.roll_source = roll_source
+
+    if pick_type in ("From Work Order", "To Work Order") and document_name:
+        doc.work_order = document_name
+        if not project:
+            project = frappe.db.get_value("Work Order", document_name, "project")
+    if pick_type == "To Sales Order" and sales_order:
+        doc.sales_order = sales_order
+    if pick_type == "To Subcontracting Order" and subcontracting_order:
+        doc.subcontracting_order = subcontracting_order
+        if purchase_order:
+            doc.purchase_order = purchase_order
+    if uses_batch_items:
+        for row in batch_items:
+            doc.append("batch_items", {"batch": row.get("batch"), "qty": row.get("qty")})
+    if project:
+        doc.project = project
+    if remarks:
+        doc.remarks = remarks
+    if outward_request:
+        if frappe.db.get_value("Outward Request", outward_request, "request_status") == "Completed":
+            frappe.throw(_("Outward Request {0} is already Completed").format(outward_request))
+        active = frappe.get_all(
+            "Roll Pick Assignment",
+            filters={"outward_request": outward_request, "docstatus": 1,
+                     "status": ["!=", "Cancelled"]},
+            pluck="name", limit=1,
+        )
+        if active:
+            frappe.throw(_("Outward Request {0} already has Roll Pick Assignment {1}")
+                         .format(outward_request, active[0]))
+        doc.outward_request = outward_request
+
+    doc.insert()
+    doc.submit()
+    frappe.db.commit()
+    return {"success": True, "name": doc.name}
