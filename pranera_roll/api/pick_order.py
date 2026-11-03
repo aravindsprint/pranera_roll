@@ -1263,6 +1263,36 @@ def submit_pick_order(pick_order, posting_date, submit_stock_entry=1):
 # in this app have a history of existing only on production and never
 # being fixture-exported, breaking on any fresh bench.
 
+BUILDING_BYPASS_ROLES = {"System Manager"}
+
+
+def _user_building(user=None):
+    """The user's Assigned Building (User.assigned_building), or None when
+    they see every building — no Assigned Building, or a System Manager."""
+    user = user or frappe.session.user
+    if BUILDING_BYPASS_ROLES & set(frappe.get_roles(user)):
+        return None
+    return frappe.db.get_value("User", user, "assigned_building") or None
+
+
+@frappe.whitelist()
+def get_pick_order_warehouses():
+    """Create Pick Order warehouse lists: `source` = leaf, enabled
+    warehouses of the user's building (Warehouse.building); `target` = every
+    leaf, enabled warehouse (a pick can land in another building, e.g. a
+    subcontractor's job-work warehouse)."""
+    building = _user_building()
+    all_wh = frappe.get_all(
+        "Warehouse",
+        filters={"is_group": 0, "disabled": 0},
+        fields=["name", "building"],
+        order_by="name asc",
+        limit_page_length=0,
+    )
+    source = [w.name for w in all_wh if not building or w.building == building]
+    return {"building": building, "source": source, "target": [w.name for w in all_wh]}
+
+
 @frappe.whitelist()
 def search_work_orders(txt=None):
     filters = {}
