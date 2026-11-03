@@ -91,7 +91,7 @@ import re
 
 import frappe
 from frappe import _
-from frappe.utils import now_datetime, cint, flt
+from frappe.utils import cint, flt, now_datetime
 
 from pranera_roll.api.roll_pick import (
     create_roll_picking_entry, get_batch_warehouse_overrides, get_pick_qty_targets_by_uom,
@@ -1275,6 +1275,71 @@ def _user_building(user=None):
     return frappe.db.get_value("User", user, "assigned_building") or None
 
 
+def _warehouse_batch_rows(batch_no, building=None, txt="", start=0, page_len=0):
+    """[(warehouse, batch qty)] for leaf, enabled warehouses — of `building`
+    when given — warehouses holding the batch first (most stock first), then
+    the rest alphabetically. page_len 0 = no limit."""
+    limit = "limit %(page_len)s offset %(start)s" if cint(page_len) else ""
+    return frappe.db.sql(
+        f"""
+        select w.name, ifnull(b.qty, 0) as qty
+        from `tabWarehouse` w
+        left join (
+            select warehouse, sum(qty) as qty
+            from (
+                select sle.warehouse as warehouse, sle.actual_qty as qty
+                from `tabStock Ledger Entry` sle
+                where sle.is_cancelled = 0
+                    and sle.docstatus = 1
+                    and sle.batch_no = %(batch_no)s
+                union all
+                select sbe.warehouse as warehouse, sbe.qty as qty
+                from `tabSerial and Batch Entry` sbe
+                inner join `tabStock Ledger Entry` sle on sle.serial_and_batch_bundle = sbe.parent
+                where sle.is_cancelled = 0
+                    and sle.docstatus = 1
+                    and sbe.batch_no = %(batch_no)s
+            ) combined
+            group by warehouse
+        ) b on b.warehouse = w.name
+        where w.is_group = 0
+            and w.disabled = 0
+            and (%(building)s = '' or w.building = %(building)s)
+            and w.name like %(txt)s
+        order by (ifnull(b.qty, 0) > 0) desc, ifnull(b.qty, 0) desc, w.name
+        {limit}
+        """,
+        {
+            "batch_no": batch_no or "",
+            "building": building or "",
+            "txt": f"%{txt}%" if txt else "%",
+            "start": cint(start),
+            "page_len": cint(page_len),
+        },
+    )
+
+
+@frappe.whitelist()
+def get_batch_pick_info(batch):
+    """Create Pick Order → one Batch Items row: the batch's item and
+    stock UOM (Roll Pick Batch Item fetches the same on save), plus the
+    user's building warehouses with this batch's qty, stock-holding first."""
+    info = frappe.db.get_value("Batch", batch, ["item", "stock_uom"], as_dict=True)
+    if not info:
+        frappe.throw(frappe._("Batch {0} not found").format(batch))
+    building = _user_building()
+    return {
+        "batch": batch,
+        "item": info.item,
+        "stock_uom": info.stock_uom,
+        "building": building,
+        "warehouses": [
+            {"warehouse": name, "qty": flt(qty, 3)}
+            for name, qty in _warehouse_batch_rows(batch, building)
+        ],
+    }
+
+
 @frappe.whitelist()
 def get_pick_order_warehouses():
     """Create Pick Order warehouse lists: `source` = leaf, enabled
@@ -1440,7 +1505,14 @@ def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to
             doc.purchase_order = purchase_order
     if uses_batch_items:
         for row in batch_items:
-            doc.append("batch_items", {"batch": row.get("batch"), "qty": row.get("qty")})
+            doc.append("batch_items", {
+                "batch": row.get("batch"),
+                "qty": row.get("qty"),
+                # Planning hint: where this batch's qty sits (one batch can
+                # be split over several rows/warehouses). Item and Stock UOM
+                # are fetched from the Batch on save.
+                "warehouse": row.get("warehouse") or None,
+            })
     if project:
         doc.project = project
     if remarks:
