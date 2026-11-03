@@ -95,6 +95,7 @@ from frappe.utils import cint, flt, now_datetime
 
 from pranera_roll.api.roll_pick import (
     create_roll_picking_entry, get_batch_warehouse_overrides, get_pick_qty_targets_by_uom,
+    _batch_qty_in_warehouse,
     TOLERANCE_PCT,
 )
 
@@ -911,19 +912,6 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse, chosen_batch=Non
             ).format(roll_no, roll.project, doc.work_order, wo_project))
 
     return _record_scan(doc, roll_no, roll, source_warehouse)
-
-
-def _batch_qty_in_warehouse(batch_no, warehouse, item_code=None):
-    """Current stock of one batch in one warehouse (ERPNext's own batch-qty
-    logic, so Serial and Batch Bundle entries are counted)."""
-    from erpnext.stock.doctype.batch.batch import get_batch_qty
-    try:
-        qty = get_batch_qty(batch_no=batch_no, warehouse=warehouse, item_code=item_code)
-    except TypeError:  # older signature without item_code
-        qty = get_batch_qty(batch_no=batch_no, warehouse=warehouse)
-    if isinstance(qty, list):
-        qty = sum(flt(r.get("qty")) for r in qty if r.get("warehouse") == warehouse)
-    return flt(qty)
 
 
 def _batch_choice_response(e, source_warehouse):

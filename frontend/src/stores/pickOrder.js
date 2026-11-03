@@ -136,10 +136,25 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
 
     const rows = []
     const used = new Set()
+    // The same batch + item can be planned on several lines (one per
+    // warehouse holding it, e.g. RPA-1206). Merge those into one target
+    // first — otherwise the first line swallows every scan and shows a
+    // false "Excess" while the others stay at 0. (Ported from pranera_knit.)
+    const planned = new Map()
     for (const b of (order.value.batch_items || [])) {
+      const k = key(b.batch, b.item_code)
+      if (!planned.has(k)) {
+        planned.set(k, { batch: b.batch || '', item_code: b.item_code || '', uom: b.uom || 'Kgs', qty: 0, warehouses: [] })
+      }
+      const p = planned.get(k)
+      p.qty += Number(b.qty) || 0
+      if (b.warehouse && !p.warehouses.includes(b.warehouse)) p.warehouses.push(b.warehouse)
+    }
+
+    for (const b of planned.values()) {
       const row = {
-        batch: b.batch || '', item_code: b.item_code || '', uom: b.uom || 'Kgs',
-        plannedQty: Number(b.qty) || 0, alreadyQty: 0, sessionQty: 0, rolls: 0,
+        batch: b.batch, item_code: b.item_code, uom: b.uom, warehouses: b.warehouses,
+        plannedQty: b.qty, alreadyQty: 0, sessionQty: 0, rolls: 0,
       }
       // Planned row without a known item_code takes every item picked from that batch.
       for (const [k, p] of picked) {
