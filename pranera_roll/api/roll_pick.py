@@ -26,6 +26,11 @@ from frappe.utils import now_datetime, today, get_datetime, nowtime, cint, flt
 # of truth — pick_order.py imports this for the execution page's band.
 TOLERANCE_PCT = 0.10
 
+# Max shortfall (fraction of the picked qty) between the picked rolls'
+# weights and a batch's actual stock that is absorbed as weighing variance
+# instead of blocking the pick — see _split_batch_across_warehouses.
+BATCH_WEIGHT_VARIANCE_PCT = 0.01
+
 
 def _get_warehouse_address(warehouse):
     """
@@ -172,8 +177,6 @@ def _split_batch_across_warehouses(item_code, batch_no, qty, preferred_warehouse
         return [(preferred_warehouse, qty)]
 
     candidates = [preferred_warehouse] + [w for w in plan_warehouses if w and w != preferred_warehouse]
-    if len(candidates) == 1:
-        return [(preferred_warehouse, qty)]
 
     splits, remaining, available = [], qty, {}
     for wh in candidates:
@@ -184,6 +187,23 @@ def _split_batch_across_warehouses(item_code, batch_no, qty, preferred_warehouse
         if take > 0:
             splits.append((wh, take))
             remaining = flt(remaining - take, 3)
+
+    # Weighing variance: the rolls' sticker weights (Roll.roll_weight) can
+    # add up to slightly more than the batch's booked stock — e.g. batch
+    # 26PTIN1734/VBP/PO26KT04824-2: 23 rolls weigh 601.55 kg but only
+    # 600.3 kg was received into stock. Picking every roll of such a batch
+    # used to fail outright. When the shortfall is within
+    # BATCH_WEIGHT_VARIANCE_PCT of the picked qty and something was found,
+    # move everything the planned warehouses actually hold instead; the
+    # Roll Wise Pick List still records the true roll weights. A larger
+    # shortfall is a real stock problem and still blocks the pick.
+    if remaining > 0.0005 and splits and remaining <= qty * BATCH_WEIGHT_VARIANCE_PCT:
+        frappe.msgprint(_(
+            "Batch {0}: picked rolls weigh {1} but only {2} is in stock; "
+            "the Stock Entry moves {2} (difference {3} treated as weighing variance)."
+        ).format(batch_no, qty, flt(qty - remaining, 3), flt(remaining, 3)),
+            indicator="orange", alert=True)
+        return splits
 
     if remaining > 0.0005:
         frappe.throw(_(
