@@ -297,34 +297,18 @@ def _repack_related_batches(batch, max_hops=6):
             {"b": tuple(frontier)},
         )
         found = set()
-        for se_name, item_code in entries:
-            # A repack may change the item code as well as the batch (a
-            # colour change: SKF11772/WHITE/14.5X1.5 -> SKF11772/CRICKET
-            # IVORY/14.5X1.5, RP/26/07070). Link batches of the same base
-            # article (the code before the first "/"), so the collar and cuff
-            # repacked in the same entry (SKF11771 vs SKF11772) stay apart.
-            base = _base_article(item_code)
-            se_rows = frappe.db.sql(
-                "SELECT d.item_code, d.batch_no FROM `tabStock Entry Detail` d WHERE d.parent = %(se)s",
-                {"se": se_name},
-            )
-            items = tuple({i for i, _b in se_rows if i == item_code or _base_article(i) == base})
-            if not items:
-                continue
-            found.update(b for i, b in se_rows if b and i in items)
-            # Filtering the bundle lookup by item keeps it on an index — by
-            # voucher_no alone it takes several seconds per repack.
-            found.update(
-                b for (b,) in frappe.db.sql(
-                    """
-                    SELECT sbe.batch_no FROM `tabSerial and Batch Entry` sbe
-                    INNER JOIN `tabSerial and Batch Bundle` sbb ON sbb.name = sbe.parent
-                    WHERE sbb.voucher_type = 'Stock Entry' AND sbb.voucher_no = %(se)s
-                      AND sbb.item_code IN %(items)s AND sbb.docstatus = 1
-                    """,
-                    {"se": se_name, "items": items},
-                ) if b
-            )
+        for se_name in {e[0] for e in entries}:
+            src, tgt = _repack_sides(se_name, {e[1] for e in entries if e[0] == se_name})
+            # Only follow consumed -> produced (and back). Batches that are
+            # merely consumed side by side are not related: a bulk
+            # cutting-waste repack (RP/26/07041) consumes hundreds of
+            # batches of the same article and produces only a waste item,
+            # and linking those siblings made the family snowball across
+            # every waste repack (30s+ per scan).
+            if src & family:
+                found |= tgt
+            if tgt & family:
+                found |= src
         frontier = found - family
         if not frontier:
             break
@@ -333,6 +317,44 @@ def _repack_related_batches(batch, max_hops=6):
     for b_ in family:
         cache[b_] = family
     return family
+
+
+def _repack_sides(se_name, item_codes):
+    """({consumed batches}, {produced batches}) of a Repack Stock Entry,
+    limited to rows of the same base article as `item_codes` (colour changes
+    count). Reads Stock Entry Detail.batch_no and the v15 Serial and Batch
+    Bundle entries (by bundle name, so it stays on the parent index)."""
+    bases = {_base_article(i) for i in item_codes}
+    rows = [
+        r for r in frappe.db.sql(
+            """
+            SELECT item_code, batch_no, serial_and_batch_bundle,
+                   IFNULL(s_warehouse, '') != '' AS is_src,
+                   IFNULL(t_warehouse, '') != '' AS is_tgt
+            FROM `tabStock Entry Detail` WHERE parent = %(se)s
+            """,
+            {"se": se_name},
+            as_dict=True,
+        )
+        if _base_article(r.item_code) in bases
+    ]
+    bundle_batches = {}
+    bundles = tuple({r.serial_and_batch_bundle for r in rows if r.serial_and_batch_bundle})
+    if bundles:
+        for parent, b in frappe.db.sql(
+            "SELECT parent, batch_no FROM `tabSerial and Batch Entry` WHERE parent IN %(p)s",
+            {"p": bundles},
+        ):
+            if b:
+                bundle_batches.setdefault(parent, set()).add(b)
+    src, tgt = set(), set()
+    for r in rows:
+        bs = bundle_batches.get(r.serial_and_batch_bundle, set()) | ({r.batch_no} if r.batch_no else set())
+        if r.is_src:
+            src |= bs
+        if r.is_tgt:
+            tgt |= bs
+    return src, tgt
 
 
 def _latest_repack(roll_no, batch, item_code, allowed_batches=None, max_hops=8, chosen_batch=None):
@@ -1013,11 +1035,17 @@ def _record_scan(doc, roll_no, roll, source_warehouse):
     # item code sitting in the warehouse.
     if doc.batch_items:
         allowed_batches = {r.batch for r in doc.batch_items if r.batch}
-        chosen_repack_ok = (
-            roll.get("batch_chosen") and roll.batch
-            and (_repack_related_batches(roll.batch) & allowed_batches)
-        )
-        if not chosen_repack_ok and (not roll.batch or roll.batch not in allowed_batches):
+        # Only walk the repack family when the batch isn't on the Pick Order
+        # already — the common case (worker picks the Pick Order batch) then
+        # needs no lineage lookup at all.
+        if not roll.batch or roll.batch not in allowed_batches:
+            chosen_repack_ok = (
+                roll.get("batch_chosen") and roll.batch
+                and (_repack_related_batches(roll.batch) & allowed_batches)
+            )
+        else:
+            chosen_repack_ok = True
+        if not chosen_repack_ok:
             frappe.throw(_(
                 "Roll {0}'s batch {1} is not one of the batches specified for this "
                 "Pick Order ({2})"
