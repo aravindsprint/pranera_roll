@@ -39,6 +39,9 @@
           <button class="ah-link" :class="{ 'ah-link--active': active === 'qi-finish-rolls' }" @click="go('/roll-app/qi-finish-rolls')">
             <span class="ah-link__icon">🏷️</span><span>QI Finish Rolls</span>
           </button>
+          <button class="ah-link" :class="{ 'ah-link--active': active === 'qi-cc-finish-rolls' }" @click="go('/roll-app/qi-cc-finish-rolls')">
+            <span class="ah-link__icon">🎽</span><span>QI CC Finish Rolls</span>
+          </button>
           <button class="ah-link" :class="{ 'ah-link--active': active === 'stock' }" @click="go('/roll-app/stock')">
             <span class="ah-link__icon">📦</span><span>Stock</span>
           </button>
