@@ -9,3 +9,4 @@
 pranera_roll.patches.v1_0.add_pick_order_persistence
 pranera_roll.patches.v1_1.add_pick_qty_summary
 pranera_roll.patches.v1_2.add_subcontract_pick_type
+pranera_roll.patches.v1_3.add_allow_old_roll_scan
