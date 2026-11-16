@@ -7,6 +7,7 @@ Roll picking & roll management floor app for ERPNext — a trimmed duplicate of
 |------------------|-----------------------------------------|--------------|
 | My Pick Orders   | `/roll-app/my-pick-orders`              | Roll Pick Assignments assigned to the logged-in user → opens **Pick Order Execution** (`/roll-app/roll-wise-pick-order-execution`): QR scan rolls, ±3% tolerance, per-UOM progress, change source/target warehouse, submit as Draft/Submitted Stock Entry |
 | Create Pick Order | `/roll-app/create-pick-order`           | Supervisor creates + submits a Roll Pick Assignment (pick type, roll source, Work/Sales Order, warehouses, batch items or pick qty, assigned worker) |
+| Outward Request  | `/roll-app/outward-request`             | Request to send material From one building To another against a Work Order (one request per WO) or subcontracted PO. Batch dropdown lists batch + warehouse pairs in the From building with stock, qty reserved by other open requests, and free qty |
 | Stock            | `/roll-app/stock`                       | Warehouse batch stock (Stock Ledger balance) with roll numbers; scan a warehouse label, roll sticker or batch to jump/filter |
 | Create Rolls     | `/roll-app/create-rolls`                | Cut Rolls / Purchase Order / Subcontract Order tabs, QR label printing |
 | Rolls            | `/roll-app/rolls`                       | Search, view, edit, create, delete rolls; Roll Packing List; QR |
@@ -21,6 +22,8 @@ pranera_roll/
     ├── utils.py                  knit_app_owns_hooks() guard
     ├── api/pick_order.py         worker-side pick-order endpoints + Create Pick Order
     ├── api/stock.py              Stock page: get_warehouse_stock, resolve_scan
+    ├── api/outward_request.py    Outward Request page: items, batch stock + reservations, save, pick assignment
+    ├── outward_request_events.py one-request-per-WO / From / warehouse rules; status-tracking fallback
     ├── api/roll_pick.py          create_roll_picking_entry + helpers (from knit.py)
     ├── pick_qty_summary.py       Roll Pick Assignment.validate
     ├── roll_wise_pick_list_events.py   Stock Entry submit/cancel + Roll Wise Pick List.validate
