@@ -487,3 +487,62 @@ export const getWarehouseStock = (warehouse) =>
 
 export const resolveStockScan = (value) =>
   call('pranera_roll.api.stock.resolve_scan', { value }).then(r => r.message)
+
+// ── Outward Request ──────────────────────────────────────────────────────────
+// pranera_roll/api/outward_request.py (rules: pranera_roll/outward_request_events.py).
+// Status (Roll Pick Assigned → Picked → Completed) is maintained server-side
+// from the linked pick chain, so the page only reads it.
+const OR_API = 'pranera_roll.api.outward_request'
+
+// { source, receipts, items, existing_request } — existing_request is set
+// (and items empty) when the Work Order already has an Outward Request.
+export const getOutwardRequestItems = ({ workOrder, purchaseOrder, fromBuilding, name }) =>
+  call(`${OR_API}.get_outward_request_items`, {
+    work_order: workOrder || undefined, purchase_order: purchaseOrder || undefined,
+    from_building: fromBuilding || undefined, name: name || undefined,
+  }).then(r => r.message)
+
+export const saveOutwardRequest = (payload) =>
+  call(`${OR_API}.save_outward_request`, payload).then(r => r.message)
+
+export const getOutwardRequest = (name) =>
+  call(`${OR_API}.get_outward_request`, { name }).then(r => r.message)
+
+export const listOutwardRequests = ({ requestStatus, txt, sameDayApproval } = {}) =>
+  call(`${OR_API}.list_outward_requests`, {
+    request_status: requestStatus || undefined, txt: txt || undefined,
+    same_day_approval: sameDayApproval || undefined,
+  }).then(r => r.message || [])
+
+export const getOutwardRequestConfig = () =>
+  call(`${OR_API}.get_outward_request_config`).then(r => r.message)
+
+export const approveOutwardSameDay = (name, remarks) =>
+  call(`${OR_API}.approve_same_day`, { name, remarks: remarks || undefined }).then(r => r.message)
+
+export const rejectOutwardSameDay = (name, remarks) =>
+  call(`${OR_API}.reject_same_day`, { name, remarks }).then(r => r.message)
+
+export const getBuildings = () =>
+  call(`${OR_API}.get_buildings`).then(r => r.message || [])
+
+export const searchWorkOrdersForOutward = (txt) =>
+  call(`${OR_API}.search_work_orders`, { txt }).then(r => r.message || [])
+
+export const searchPurchaseOrdersForOutward = (txt) =>
+  call(`${OR_API}.search_purchase_orders`, { txt }).then(r => r.message || [])
+
+// One option per (batch, warehouse) with stock_qty / reserved_qty /
+// available_qty / unallocated_qty and the reservations behind them.
+export const searchBatchStock = (itemCode, txt, { workOrder, purchaseOrder, fromBuilding, excludeRequest } = {}) =>
+  call(`${OR_API}.search_batch_stock`, {
+    item_code: itemCode, txt: txt || undefined,
+    work_order: workOrder || undefined, purchase_order: purchaseOrder || undefined,
+    from_building: fromBuilding || undefined, exclude_request: excludeRequest || undefined,
+  }).then(r => r.message || [])
+
+export const getOutwardPickDefaults = (name) =>
+  call(`${OR_API}.get_pick_assignment_defaults`, { name }).then(r => r.message)
+
+export const createOutwardRollPickAssignment = (payload) =>
+  call(`${OR_API}.create_roll_pick_assignment`, payload).then(r => r.message)
