@@ -617,14 +617,14 @@ async function createRoll() {
   creating.value = true
   createError.value = ''
   try {
-    const resp = await call('knit_create_roll', {
+    const resp = await call('pranera_roll.api.knit_rolls.create_roll', {
       job_card: createForm.value.job_card,
       batch_no: createForm.value.batch || '',
     })
     const newName = resp?.message?.[0]?.name
     // Save weight
     if (newName) {
-      await call('knit_save_roll_data', {
+      await call('pranera_roll.api.knit_rolls.save_roll_data', {
         job_card:    createForm.value.job_card,
         work_order:  createForm.value.work_order,
         roll_no:     newName,
@@ -650,7 +650,7 @@ async function doDelete() {
   deleting.value = true
   deleteError.value = ''
   try {
-    await call('knit_delete_roll', { roll_name: deleteTarget.value })
+    await call('pranera_roll.api.knit_rolls.delete_roll', { roll_name: deleteTarget.value })
     deleteTarget.value = null
     await fetchRolls()
   } catch(e) {

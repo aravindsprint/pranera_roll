@@ -28,3 +28,12 @@ cd ~/frappe-bench && bench build --app pranera_roll && bench restart
 
 ## Local dev
 `npm run dev` → http://localhost:3000/roll-app (proxied to erp.pranera.in).
+
+## Roll endpoints (formerly Server Scripts)
+The roll app no longer calls the site-level Server Scripts `knit_get_csrf`, `knit_get_po_items`,
+`knit_get_so_items`, `knit_create_po_so_roll`, `knit_cut_roll`, `knit_create_roll`,
+`knit_save_roll_data`, `knit_delete_roll`. Their Python versions are in
+`pranera_roll/api/knit_rolls.py` (same arguments and responses, login required).
+- erp.pranera.in: leave the Server Scripts in place — pranera_knit still uses them.
+- A new site doesn't need the Server Scripts or `server_script_enabled`.
+- With `roll_management` installed, cutting a roll also moves the cut qty in the Roll Ledger.

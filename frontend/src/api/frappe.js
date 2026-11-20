@@ -2,10 +2,10 @@
 // Trimmed copy of pranera_knit's API layer: only what My Pick Orders,
 // Pick Order Execution, Create Rolls and Rolls actually use.
 //
-// Shared site-level Server Scripts still called from here (they live on
-// erp.pranera.in, not in either app): knit_get_csrf, knit_cut_roll,
-// knit_create_po_so_roll, knit_get_po_items, knit_get_so_items — and, from
-// RollsPage, knit_create_roll / knit_save_roll_data / knit_delete_roll.
+// The roll endpoints that used to be site-level Server Scripts (knit_get_csrf,
+// knit_cut_roll, knit_create_po_so_roll, knit_get_po_items, knit_get_so_items,
+// knit_create_roll, knit_save_roll_data, knit_delete_roll) now live in this app:
+// pranera_roll/api/knit_rolls.py (same arguments / responses, login required).
 
 // ── Connectivity signal ───────────────────────────────────────────────────
 // Any HTTP answer from the server (other than a gateway error) proves the
@@ -40,16 +40,16 @@ export async function ensureCSRF() {
   if (cookie) { _csrf = cookie; return _csrf }
   // 4. Fetch from Server Script (dev proxy)
   try {
-    const r = await fetch('/api/method/knit_get_csrf', { credentials: 'include' })
+    const r = await fetch('/api/method/pranera_roll.api.knit_rolls.get_csrf', { credentials: 'include' })
     if (r.ok) {
       const d = await r.json()
       if (d?.message) { _csrf = d.message; window.csrf_token = d.message }
-      else console.warn('ensureCSRF: knit_get_csrf returned no token (no session/sid cookie?)')
+      else console.warn('ensureCSRF: get_csrf returned no token (no session/sid cookie?)')
     } else {
-      console.warn('ensureCSRF: knit_get_csrf HTTP', r.status)
+      console.warn('ensureCSRF: get_csrf HTTP', r.status)
     }
   } catch(e) {
-    console.warn('ensureCSRF: knit_get_csrf failed', e)
+    console.warn('ensureCSRF: get_csrf failed', e)
   }
   return _csrf
 }
@@ -383,22 +383,22 @@ export const submitPickOrder = (pickOrder, postingDate, submitStockEntry = true)
 
 // ── Create Rolls page (Cut Rolls / Purchase Order / Subcontract Order) ──────
 // Backed by Server Scripts already live on erp.pranera.in:
-// knit_cut_roll, knit_create_po_so_roll, knit_get_po_items, knit_get_so_items.
+// pranera_roll.api.knit_rolls: cut_roll, create_po_so_roll, get_po_items, get_so_items.
 // All three roll-creation paths share the same "next numeric roll_no, not a
 // KCC-prefixed one" sequence (MAX(CAST(name AS UNSIGNED)) WHERE name REGEXP
 // '^[0-9]+$'), enforced server-side — nothing to duplicate here.
 
 export const getPOItems = (purchaseOrder) =>
-  call('knit_get_po_items', { purchase_order: purchaseOrder }).then(r => r.message || [])
+  call('pranera_roll.api.knit_rolls.get_po_items', { purchase_order: purchaseOrder }).then(r => r.message || [])
 
 export const getSOItems = (subcontractingOrder) =>
-  call('knit_get_so_items', { subcontracting_order: subcontractingOrder }).then(r => r.message || [])
+  call('pranera_roll.api.knit_rolls.get_so_items', { subcontracting_order: subcontractingOrder }).then(r => r.message || [])
 
 export const createPOSORoll = (payload) =>
-  call('knit_create_po_so_roll', payload).then(r => r.message)
+  call('pranera_roll.api.knit_rolls.create_po_so_roll', payload).then(r => r.message)
 
 export const cutRoll = (payload) =>
-  call('knit_cut_roll', payload).then(r => r.message)
+  call('pranera_roll.api.knit_rolls.cut_roll', payload).then(r => r.message)
 
 // Search rolls by roll no / item code / commercial name for the Cut Rolls
 // picker on the Create Rolls page. Excludes cancelled rolls.
