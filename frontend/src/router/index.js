@@ -24,6 +24,7 @@ const routes = [
   { path: '/roll-app/create-pick-order', component: () => import('@/pages/create-pick-order/CreatePickOrderPage.vue') },
   { path: '/roll-app/stock',          component: () => import('@/pages/stock/StockPage.vue') },
   { path: '/roll-app/verify-rolls',   component: () => import('@/pages/verify-rolls/VerifyRollsPage.vue') },
+  { path: '/roll-app/receive-rolls',  component: () => import('@/pages/receive-rolls/ReceiveRollsPage.vue') },
   { path: '/roll-app/outward-request', component: () => import('@/pages/outward-request/OutwardRequestPage.vue') },
 
   // Opened from a row on My Pick Orders (not in the menu itself)

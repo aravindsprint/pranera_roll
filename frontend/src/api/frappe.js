@@ -546,3 +546,17 @@ export const getOutwardPickDefaults = (name) =>
 
 export const createOutwardRollPickAssignment = (payload) =>
   call(`${OR_API}.create_roll_pick_assignment`, payload).then(r => r.message)
+
+// ── Receive Rolls (roll_management app) ─────────────────────────────────────
+// Weigh the rolls arriving on a draft Subcontracting / Purchase Receipt; the server creates
+// the Rolls (next roll numbers) + a Roll Packing List linked to the receipt.
+const RR = 'roll_management.receiving'
+
+export const searchReceiptsForRolls = (txt, doctype = 'Subcontracting Receipt') =>
+  call(`${RR}.search_receipts`, { txt, doctype }).then(r => r.message || [])
+
+export const getReceiptForRolls = (doctype, name) =>
+  call(`${RR}.get_receipt`, { doctype, name }).then(r => r.message)
+
+export const receiveRolls = (doctype, name, rolls) =>
+  call(`${RR}.receive_rolls`, { doctype, name, rolls: JSON.stringify(rolls) }).then(r => r.message)

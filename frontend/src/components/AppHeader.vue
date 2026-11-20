@@ -28,6 +28,9 @@
           <button class="ah-link" :class="{ 'ah-link--active': active === 'verify-rolls' }" @click="go('/roll-app/verify-rolls')">
             <span class="ah-link__icon">🔎</span><span>Verify Rolls</span>
           </button>
+          <button class="ah-link" :class="{ 'ah-link--active': active === 'receive-rolls' }" @click="go('/roll-app/receive-rolls')">
+            <span class="ah-link__icon">📥</span><span>Receive Rolls</span>
+          </button>
           <button class="ah-link" :class="{ 'ah-link--active': active === 'outward-request' }" @click="go('/roll-app/outward-request')">
             <span class="ah-link__icon">📤</span><span>Outward Request</span>
           </button>
