@@ -263,6 +263,9 @@ def _base_article(item_code):
     return (item_code or "").split("/", 1)[0].strip()
 
 
+_REPACK_FAMILY_LIMIT = 200
+
+
 def _repack_related_batches(batch, max_hops=6):
     """All batches linked to `batch` through submitted Repack Stock Entries
     of the same item or the same base article (colour change), in either
@@ -312,13 +315,24 @@ def _repack_related_batches(batch, max_hops=6):
             # repacked in the same entry (SKF11771 vs SKF11772) stay apart.
             base = _base_article(item_code)
             se_rows = frappe.db.sql(
-                "SELECT d.item_code, d.batch_no FROM `tabStock Entry Detail` d WHERE d.parent = %(se)s",
+                """SELECT d.item_code, d.batch_no, IFNULL(d.t_warehouse, '') != ''
+                   FROM `tabStock Entry Detail` d WHERE d.parent = %(se)s""",
                 {"se": se_name},
             )
-            items = tuple({i for i, _b in se_rows if i == item_code or _base_article(i) == base})
+            # When the repack has an output of exactly this item, follow only
+            # that item. Only a repack with no same-item output is a colour
+            # change, and only then link by base article. Otherwise a repack
+            # that re-batches several colours of one article at once
+            # (RP/26/06980: navy, white and yellow SKF11355) chains every
+            # colour together, and the family grows into thousands of
+            # unrelated batches and the request times out ("Failed to fetch").
+            if any(i == item_code and is_out for i, _b, is_out in se_rows):
+                items = (item_code,)
+            else:
+                items = tuple({i for i, _b, _o in se_rows if i == item_code or _base_article(i) == base})
             if not items:
                 continue
-            found.update(b for i, b in se_rows if b and i in items)
+            found.update(b for i, b, _o in se_rows if b and i in items)
             # Filtering the bundle lookup by item keeps it on an index — by
             # voucher_no alone it takes several seconds per repack.
             found.update(
@@ -336,6 +350,11 @@ def _repack_related_batches(batch, max_hops=6):
         if not frontier:
             break
         family |= frontier
+        if len(family) > _REPACK_FAMILY_LIMIT:
+            # Safety valve: a real roll lineage is a handful of batches. A
+            # family this big means bulk repacks are being chained together;
+            # stop rather than let the request run until it times out.
+            break
 
     for b_ in family:
         cache[b_] = family
@@ -403,6 +422,12 @@ def _latest_repack(roll_no, batch, item_code, allowed_batches=None, max_hops=8, 
             outs = sorted(o for o in outs if o[0] not in seen)
             if not outs:
                 continue
+            # Same rule as _repack_related_batches: if the repack has outputs
+            # of exactly this item, the roll is in one of those. Other colours
+            # of the same article are only candidates for a colour change.
+            exact = [o for o in outs if o[1] == item_code]
+            if exact:
+                outs = exact
             if len(outs) > 1 and chosen_batch:
                 if chosen_batch == batch:
                     # Worker says the roll is still in the batch that was
@@ -1104,8 +1129,11 @@ def _record_scan(doc, roll_no, roll, source_warehouse):
     # item code sitting in the warehouse.
     if doc.batch_items:
         allowed_batches = {r.batch for r in doc.batch_items if r.batch}
+        # Check the cheap exact match first: the repack-family walk is only
+        # needed when the worker picked a batch that isn't on the Pick Order.
         chosen_repack_ok = (
             roll.get("batch_chosen") and roll.batch
+            and roll.batch not in allowed_batches
             and (_repack_related_batches(roll.batch) & allowed_batches)
         )
         if not chosen_repack_ok and (not roll.batch or roll.batch not in allowed_batches):
